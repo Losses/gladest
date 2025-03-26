@@ -61,4 +61,3 @@ Compared to GladTeX:
 - **Font Size in `template.typ`**: The `templates` directory contains a `template.typ` file with a hardcoded font size. Developers should not modify this value, as it ensures proper alignment between Typst’s internal units and the HTML rendering output.
 - **Custom Fonts**: Developers can add support for additional fonts (e.g., for specific languages) by modifying the source code and recompiling. Refer to the source for guidance on font integration.
 - **PNG Sizing**: For PNG output, formula dimensions are constrained using `width` and `height` attributes in the `style` tag, measured in `em` units. While this approach optimizes visual fidelity and compatibility, it may not work perfectly in readers with non-standard rendering engines. After extensive testing, this was deemed the best trade-off.
-```
