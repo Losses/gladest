@@ -1,0 +1,18 @@
+[package]
+name = "gladst"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22.1"
+clap = { version = "4.5.32", features = ["cargo"] }
+clap_derive = "4.5.32"
+derive_typst_intoval = "0.3.0"
+indicatif = "0.17.11"
+rayon = "1.10.0"
+scraper = "0.23.1"
+typst = "0.13.1"
+typst-as-lib = { version = "0.14.1", features = ["packages", "reqwest"] }
+typst-render = "0.13.1"
+typst-svg = "0.13.1"
+urlencoding = "2.1.3"
