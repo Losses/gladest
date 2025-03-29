@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.97"
 base64 = "0.22.1"
 clap = { version = "4.5.32", features = ["cargo"] }
 clap_derive = "4.5.32"
 derive_typst_intoval = "0.3.0"
+glob = "0.3.2"
 indicatif = "0.17.11"
 rayon = "1.10.0"
 scraper = "0.23.1"
