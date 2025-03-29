@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["gladest-engine"]
+members = ["gladest-engine", "markdown-it-gladest/crates/markdown-it-gladest"]
 
 [[bin]]
 name = "gladst"
@@ -12,12 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.97"
-base64 = "0.22.1"
 clap = { version = "4.5.32", features = ["cargo"] }
 clap_derive = "4.5.32"
 gladest-engine = { version = "0.1.0", path = "gladest-engine" }
 glob = "0.3.2"
+html-escape = "0.2.13"
 indicatif = "0.17.11"
 rayon = "1.10.0"
 scraper = "0.23.1"
-urlencoding = "2.1.3"

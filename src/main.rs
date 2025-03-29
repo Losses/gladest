@@ -6,14 +6,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose};
 use clap::{Parser, arg, command};
 use clap_derive::{Parser, ValueEnum};
 use glob::glob;
+use html_escape::encode_text;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use scraper::{Html, Selector};
-use urlencoding::encode;
 
 use gladest_engine::{RenderEngine, RenderFormat};
 
@@ -94,43 +93,37 @@ fn render_formulas_in_html(
                 _ => true,
             };
 
-            let renderer = RenderEngine::new(ppi); // Create renderer per task
+            let renderer = RenderEngine::new(); // Create renderer per task
 
-            match renderer.render_formula(&formula, is_inline, match format {
-                Format::Png => RenderFormat::Png,
-                Format::Svg => RenderFormat::Svg,
-            }) {
-                 Ok(result) => {
+            match renderer.render_formula(
+                &formula,
+                is_inline,
+                match format {
+                    Format::Png => RenderFormat::Png,
+                    Format::Svg => RenderFormat::Svg,
+                },
+                Some(ppi),
+            ) {
+                Ok(result) => {
                     if !result.data.is_empty() {
-                        let mime_type = match format {
-                            Format::Svg => "image/svg+xml",
-                            Format::Png => "image/png",
-                        };
-                        let b64 = general_purpose::STANDARD.encode(&result.data);
-                        let formula_escaped = encode(&formula);
-
-                        let replacement = format!(
-                            r#"<img class="gladst {env}" style="width: {x_em:.4}em; height: {y_em:.4}em; vertical-align: middle;" src="data:{mime_type};base64,{b64}" alt="{formula_escaped}"/>"#,
-                            env = env,
-                            x_em = result.x_em,
-                            y_em = result.y_em,
-                            mime_type = mime_type,
-                            b64 = b64,
-                            formula_escaped = formula_escaped
-                        );
+                        let replacement = result.to_html();
 
                         let mut locked_string = processed_html_string_mutex.lock().unwrap();
                         *locked_string = locked_string.replacen(&formula_id, &replacement, 1);
                     }
-                 }
-                 Err(e) => {
+                }
+                Err(e) => {
                     let error_msg = format!("Error rendering formula '{}': {:?}", formula, e);
                     eprintln!("{}", error_msg); // Keep error reporting
                     render_errors.lock().unwrap().push(error_msg);
-                     let error_replacement = format!(r#"<span style="color: red;" title="Render Error: {}">[{}]</span>"#, encode(&e.to_string()), formula);
-                     let mut locked_string = processed_html_string_mutex.lock().unwrap();
-                     *locked_string = locked_string.replacen(&formula_id, &error_replacement, 1);
-                 }
+                    let error_replacement = format!(
+                        r#"<span style="color: red;" title="Render Error: {}">[{}]</span>"#,
+                        encode_text(&e.to_string()),
+                        formula
+                    );
+                    let mut locked_string = processed_html_string_mutex.lock().unwrap();
+                    *locked_string = locked_string.replacen(&formula_id, &error_replacement, 1);
+                }
             }
 
             if let Some(pb) = pb_formulas {

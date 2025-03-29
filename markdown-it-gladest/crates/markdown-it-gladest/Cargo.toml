@@ -1,0 +1,18 @@
+[package]
+name = "markdown-it-gladest"
+version = "0.1.0"
+authors = ["LOSSES Don"]
+license = "MIT"
+edition = "2021"
+exclude = ["index.node"]
+
+[lib]
+crate-type = ["cdylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+neon = "1"
+once_cell = "1.21.3"
+html-escape = "0.2.13"
+gladest-engine = { version = "0.1.0", path = "../../../gladest-engine" }

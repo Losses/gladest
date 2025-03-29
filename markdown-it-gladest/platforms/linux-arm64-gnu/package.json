@@ -1,0 +1,25 @@
+{
+  "name": "@fuuck/markdown-it-gladest-linux-arm64-gnu",
+  "description": "Prebuilt binary package for `markdown-it-gladest` on `linux-arm64-gnu`.",
+  "version": "0.1.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "index.node",
+  "files": [
+    "index.node"
+  ],
+  "neon": {
+    "type": "binary",
+    "rust": "aarch64-unknown-linux-gnu",
+    "node": "linux-arm64-gnu",
+    "os": "linux",
+    "arch": "arm64",
+    "abi": "gnu"
+  },
+  "author": "LOSSES Don",
+  "license": "MIT"
+}
