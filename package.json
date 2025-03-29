@@ -1,0 +1,7 @@
+{
+  "name": "gladest",
+  "workspaces": [
+    "markdown-it-gladest",
+    "markdown-compile-demo"
+  ]
+}
