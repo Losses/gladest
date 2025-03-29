@@ -105,6 +105,35 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3 pkg-config
+          # Set environment variables for openssl-sys crate to find Homebrew's OpenSSL
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          # Also add pkg-config path
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libffi)/lib/pkgconfig" >> $GITHUB_ENV
+
+
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # vcpkg is usually pre-installed on GitHub Windows runners
+          # Ensure VCPKG_ROOT is set (usually automatic) and vcpkg is in PATH
+          echo "Installing OpenSSL via vcpkg..."
+          vcpkg install openssl:${{ matrix.cfg.platform == 'win32-x64-msvc' && 'x64' || 'x86' }}-windows-static-md
+          # openssl-sys should auto-detect vcpkg installations if VCPKG_INSTALLATION_ROOT is set.
+          # If issues persist, uncomment and adapt the following:
+          # $VCPKG_INSTALL_DIR = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed/${{ matrix.cfg.platform == 'win32-x64-msvc' && 'x64' || 'x86' }}-windows-static-md"
+          # echo "OPENSSL_DIR=$VCPKG_INSTALL_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # echo "OPENSSL_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append # If using static-md
+        shell: pwsh # Use PowerShell for Windows steps
+
       # Setup Neon Environment - Uses local action relative to repo root.
       - name: Setup Neon Environment (Rust/Cross)
         id: neon
