@@ -44,8 +44,6 @@ runs:
       # Bun handles its own caching implicitly with bun install
       # No need to specify version here unless required, uses project's bun.lockb or latest
 
-    # Removed 'npm ci' - Assuming caller workflow handles 'bun install' in the correct workspace
-
     # Compute Rust target using neon-cli via bunx
     # Requires neon-cli to be installed in the specified workspace by the caller workflow
     - name: Compute Rust Target
@@ -53,12 +51,12 @@ runs:
       id: target
       shell: bash
       run: |
-        echo "Attempting to compute Rust target for platform '${{ inputs.platform }}' using bunx neon in workspace '${{ inputs.workspace }}'"
+        echo "Attempting to compute Rust target for platform '${{ inputs.platform }}' using bunx neon in workspace './markdown-it-gladest'"
         # Ensure neon-cli is executable via bunx in the target workspace
         TARGET=$(bunx neon list-platforms | jq -r '.["${{ inputs.platform }}"]')
         echo "Computed target: ${TARGET}"
         echo "target=${TARGET}" | tee -a $GITHUB_OUTPUT
-      working-directory: ${{ inputs.workspace }} # Critical: run where neon-cli should be found
+      working-directory: ./markdown-it-gladest
 
     # Install Rust toolchain if requested
     - name: Install Rust
