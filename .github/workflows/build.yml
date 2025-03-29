@@ -105,10 +105,6 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      - name: Install OpenSSL (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
-
       - name: Install OpenSSL (macOS)
         if: runner.os == 'macOS'
         run: |
