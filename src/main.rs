@@ -18,7 +18,8 @@ use typst::{
     foundations::{Dict, IntoValue},
     layout::PagedDocument,
 };
-use typst_as_lib::{TypstEngine, TypstTemplateMainFile};
+use typst_as_lib::TypstEngine;
+use typst_as_lib::TypstTemplateMainFile;
 use urlencoding::encode;
 
 static TEMPLATE_FILE: &str = include_str!("./templates/template.typ");
@@ -116,10 +117,6 @@ impl RenderEngine {
                 let pixel_height = (size.y.to_pt() * self.ppi as f64 / 72.0).round() as u32;
 
                 if pixel_width == 0 || pixel_height == 0 {
-                    eprintln!(
-                        "Warning: Rendered size for formula is zero. Skipping PNG encoding. Formula: {}",
-                        formula
-                    );
                     vec![]
                 } else {
                     let pixmap = typst_render::render(page, self.ppi / 72.0);
@@ -135,9 +132,8 @@ impl RenderEngine {
 }
 
 /// Renders formulas within HTML content and returns the modified HTML.
-/// Takes an optional ProgressBar to update progress for batch processing.
+/// Takes an optional ProgressBar ONLY for the single-file case to update formula progress.
 fn render_formulas_in_html(
-    file_name: &str,
     html_content: &str,
     ppi: f32,
     format: Format,
@@ -161,11 +157,6 @@ fn render_formulas_in_html(
 
         if let Some(pos) = processed_html_string.find(&original_eq_html) {
             processed_html_string.replace_range(pos..pos + original_eq_html.len(), &formula_id);
-        } else {
-            eprintln!(
-                "Warning: Could not find original HTML for formula '{}' during replacement.",
-                formula
-            );
         }
 
         formula_tasks.push((formula_id, formula, env));
@@ -175,50 +166,13 @@ fn render_formulas_in_html(
         return Ok(processed_html_string);
     }
 
-    // Format the file name to be exactly 8 characters - safe version
-    let display_name = if file_name.len() > 8 {
-        // Truncate if longer than 8 characters
-        &file_name[..8]
-    } else {
-        // Pad with spaces if shorter than 8 characters
-        &format!("{:8}", file_name)
-    };
-
-    let formula_count = formula_tasks.len();
-    let local_pb;
-    let pb_formulas_ref = match pb_formulas {
-        Some(pb) => {
-            pb.set_length(formula_count as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        &format!("    {{spinner:.green}} {} [{{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{eta}})", display_name),
-                    )
-                    .context("Failed to set formula progress style")?
-                    .progress_chars("#>-"),
-            );
-            pb.reset();
-            pb
-        }
-        None => {
-            local_pb = ProgressBar::new(formula_count as u64);
-            local_pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(&format!(
-                        "{{spinner:.green}} {} [{{bar:40.cyan/blue}}] {{pos}}/{{len}} ({{eta}})",
-                        display_name
-                    ))
-                    .context("Failed to set formula progress style")?
-                    .progress_chars("#>-"),
-            );
-            local_pb.enable_steady_tick(Duration::from_millis(100));
-            &local_pb
-        }
-    };
+    if let Some(pb) = pb_formulas {
+        pb.set_length(formula_tasks.len() as u64);
+        pb.reset();
+    }
 
     let processed_html_string_mutex = Arc::new(Mutex::new(processed_html_string));
     let render_errors = Arc::new(Mutex::new(Vec::<String>::new()));
-    let progress_counter = Arc::new(Mutex::new(0u64));
 
     formula_tasks
         .into_par_iter()
@@ -226,16 +180,10 @@ fn render_formulas_in_html(
             let is_inline = match env.as_str() {
                 "displaymath" => false,
                 "math" | "" => true,
-                _ => {
-                    eprintln!(
-                        "Warning: env '{}' is not recognized, defaulting to inline.",
-                        env
-                    );
-                    true
-                }
+                _ => true,
             };
 
-            let renderer = RenderEngine::new(ppi);
+            let renderer = RenderEngine::new(ppi); // Create renderer per task
 
             match renderer.render_formula(&formula, is_inline, format) {
                  Ok(result) => {
@@ -259,13 +207,11 @@ fn render_formulas_in_html(
 
                         let mut locked_string = processed_html_string_mutex.lock().unwrap();
                         *locked_string = locked_string.replacen(&formula_id, &replacement, 1);
-                    } else if format == Format::Png {
-                         eprintln!("Skipping replacement for formula due to zero render size: {}", formula);
                     }
                  }
                  Err(e) => {
                     let error_msg = format!("Error rendering formula '{}': {:?}", formula, e);
-                    eprintln!("{}", error_msg);
+                    eprintln!("{}", error_msg); // Keep error reporting
                     render_errors.lock().unwrap().push(error_msg);
                      let error_replacement = format!(r#"<span style="color: red;" title="Render Error: {}">[{}]</span>"#, encode(&e.to_string()), formula);
                      let mut locked_string = processed_html_string_mutex.lock().unwrap();
@@ -273,21 +219,17 @@ fn render_formulas_in_html(
                  }
             }
 
-            let mut counter = progress_counter.lock().unwrap();
-            *counter += 1;
-            pb_formulas_ref.set_position(*counter);
+            if let Some(pb) = pb_formulas {
+                pb.inc(1);
+            }
         });
-
-    if pb_formulas.is_none() {
-        pb_formulas_ref.finish_and_clear();
-    } else {
-        pb_formulas_ref.set_position(formula_count as u64);
-        pb_formulas_ref.finish();
-    }
 
     let errors = render_errors.lock().unwrap();
     if !errors.is_empty() {
-        eprintln!("\nEncountered {} formula rendering errors.", errors.len());
+        eprintln!(
+            "\nEncountered {} formula rendering errors in this file.",
+            errors.len()
+        );
     }
 
     Arc::try_unwrap(processed_html_string_mutex)
@@ -314,16 +256,7 @@ fn process_single_file(
     let input_content = fs::read_to_string(input_path)
         .with_context(|| format!("Failed to read input file: {:?}", input_path))?;
 
-    let processed_html = render_formulas_in_html(
-        &input_path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or("Formula".to_owned()),
-        &input_content,
-        ppi,
-        format,
-        pb_formulas,
-    )?;
+    let processed_html = render_formulas_in_html(&input_content, ppi, format, pb_formulas)?;
 
     let inplace = needs_inplace_modification(input_path);
     let output_path = if inplace {
@@ -343,12 +276,6 @@ fn process_single_file(
     fs::write(&output_path, processed_html)
         .with_context(|| format!("Failed to write output file: {:?}", output_path))?;
 
-    if inplace {
-        println!("Processed (in-place): {:?}", input_path);
-    } else {
-        println!("Processed: {:?} -> {:?}", input_path, output_path);
-    }
-
     Ok(())
 }
 
@@ -367,14 +294,28 @@ fn main() -> Result<()> {
 
     let ppi_f32 = args.ppi as f32;
     let format = args.format;
-    let output_dir = args.output.as_deref(); // Option<PathBuf> -> Option<&Path>
+    let output_dir = args.output.as_deref();
 
     if paths.len() == 1 {
         println!("Processing single file: {:?}", paths[0]);
-        process_single_file(&paths[0], output_dir, ppi_f32, format, None)?;
+        let formula_pb = ProgressBar::new(0);
+        formula_pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "    {spinner:.green} Formulas: [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}",
+                )
+                .context("Failed to set formula progress style for single file")?
+                .progress_chars("#>-"),
+        );
+        formula_pb.enable_steady_tick(Duration::from_millis(100));
+
+        process_single_file(&paths[0], output_dir, ppi_f32, format, Some(&formula_pb))?;
+
+        formula_pb.finish_and_clear();
     } else {
         println!("Processing {} files found by glob pattern...", paths.len());
         run_batch(&paths, output_dir, ppi_f32, format)?;
+        println!("Batch processing complete.");
     }
 
     Ok(())
@@ -387,37 +328,45 @@ fn run_batch(
     format: Format,
 ) -> Result<()> {
     let multi_progress = MultiProgress::new();
+    let files_pb = multi_progress.add(ProgressBar::new(paths.len() as u64));
+    files_pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} Files: [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .context("Failed to set files progress style")?
+            .progress_chars("#>-"),
+    );
+    files_pb.set_message("Starting...");
+
     let errors = Arc::new(Mutex::new(Vec::<(PathBuf, anyhow::Error)>::new()));
 
-    let progress_bars: Vec<_> = paths
-        .iter()
-        .map(|path| {
-            let pb = multi_progress.add(ProgressBar::new(0));
-            (path.clone(), pb)
-        })
-        .collect();
-
-    progress_bars.into_par_iter().for_each(|(path, file_pb)| {
+    paths.into_par_iter().for_each(|path| {
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        files_pb.set_message(format!("Processing: {}", file_name));
 
-        if let Err(e) = process_single_file(&path, output_dir_option, ppi, format, Some(&file_pb)) {
-            let error_record = (path.clone(), e);
+        if let Err(e) = process_single_file(path, output_dir_option, ppi, format, Some(&files_pb)) {
+            let error_record = (
+                path.clone(),
+                e.context(format!("Processing failed for file: {:?}", path)),
+            );
             errors.lock().unwrap().push(error_record);
-            file_pb.abandon_with_message(format!("Error processing {}", file_name));
-        } else {
-            file_pb.finish_with_message(format!("Finished {}", file_name));
         }
+        files_pb.inc(1);
     });
 
-    multi_progress.clear().unwrap();
+    files_pb.finish_with_message("All files processed.");
 
-    let collected_errors = errors.lock().unwrap();
+    let collected_errors = Arc::try_unwrap(errors)
+        .expect("Mutex should not be locked after parallel processing")
+        .into_inner()
+        .expect("Mutex should not be poisoned");
+
     if !collected_errors.is_empty() {
-        eprintln!("\n* Batch Processing Errors");
+        eprintln!("\n* Batch Processing Errors ({})", collected_errors.len());
         for (path, error) in collected_errors.iter() {
             eprintln!("**File: {:?}", path);
             eprintln!("***Error: {:?}", error);
         }
+        eprintln!("Finished with {} errors.", collected_errors.len());
     }
 
     Ok(())
