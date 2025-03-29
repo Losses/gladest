@@ -39,30 +39,31 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          # Fetch depth 0 for version bumping if needed later, although version bump happens in binaries job
-          # fetch-depth: 0
+          # fetch-depth: 0 # Potentially needed if neon show ci uses git history, uncomment if necessary
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
-        # with:
-        #   bun-version: latest # Optional: specify Bun version
 
-      # Assuming ./.github/actions/setup handles Rust/Cross environment
-      # and does not interfere with or require Node/npm specifically
+      # Setup Neon Environment - This uses a local action relative to the repo root.
+      # It should NOT have a working-directory set here.
       - name: Setup Neon Environment (Rust/Cross)
         uses: ./.github/actions/setup
         with:
-          use-rust: false # Keep this consistent with original, assuming setup action needs it
+          use-rust: false
 
+      # Run subsequent steps within the package directory
       - name: Install Dependencies
+        working-directory: ./markdown-it-gladest # <--- Added working directory
         run: bun install --frozen-lockfile
 
       - name: Look Up Matrix Data
         id: matrixData
+        working-directory: ./markdown-it-gladest # <--- Added working directory
         shell: bash
-        # Assuming neon-cli is a dev dependency installable via bun install
         run: echo "json=$(bunx neon show ci github | jq -rc)" | tee -a $GITHUB_OUTPUT
 
+      # Compute Matrix doesn't directly interact with files, uses previous step output.
+      # No working-directory needed here.
       - name: Compute Matrix
         id: matrix
         uses: actions/github-script@v7
@@ -80,36 +81,30 @@ jobs:
               matrix.push(...platforms.Linux.map(platform => ({ os: "ubuntu-latest", platform, script: "cross" })));
             }
             console.log("Computed Matrix:", matrix);
-            // Ensure the output is valid JSON for fromJSON()
             return matrix;
 
   binaries:
     name: Binaries (${{ matrix.cfg.platform }})
     needs: [matrix]
-    # Prevent job failure if matrix is empty
     if: ${{ needs.matrix.outputs.matrix != '[]' }}
     strategy:
-      fail-fast: false # Keep building other platforms even if one fails
+      fail-fast: false
       matrix:
-        # fromJSON handles the stringified JSON array output correctly
         cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     runs-on: ${{ matrix.cfg.os }}
     permissions:
-      contents: write # Needed for version commit and release upload
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          # Fetch all history needed for version bumping and potential tagging by release action
-          fetch-depth: 0
-          # Persist credentials for git operations if needed (e.g., pushing version bump)
-          # persist-credentials: true # Uncomment if you plan to push the version bump commit
+          fetch-depth: 0 # Needed for version bumping
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      # Setup Rust/Cross specific environment
+      # Setup Neon Environment - Uses local action relative to repo root.
       - name: Setup Neon Environment (Rust/Cross)
         id: neon
         uses: ./.github/actions/setup
@@ -117,106 +112,103 @@ jobs:
           use-cross: ${{ matrix.cfg.script == 'cross' }}
           platform: ${{ matrix.cfg.platform }}
 
+      # Run subsequent steps within the package directory
       - name: Install Dependencies
+        working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
 
       - name: Update Version
         if: ${{ inputs.update-version }}
+        working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          # Configure git user for commit
           git config --global user.name "${{ github.actor }}"
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
-
-          # Update version in package.json using bun
           bun version ${{ inputs.version }}
-
-          # Stage and commit the version change
-          git add package.json bun.lockb # Add lockfile too
-          # Use jq to get the new version for the commit message, similar to npm's %s
+          # Git add needs paths relative to the working directory
+          git add package.json bun.lockb
           NEW_VERSION=$(jq -r .version package.json)
+          # Commit happens at repo root level, but changes are staged from working dir
           git commit -m "chore(release): bump version to v${NEW_VERSION}"
-          # git push # Optional: Push the commit if needed
+          # git push # Optional push
 
       - name: Build Binary
+        working-directory: ./markdown-it-gladest
         shell: bash
         env:
-          # Pass necessary env vars for cross-compilation or platform-specific builds
-          CARGO_BUILD_TARGET: ${{ steps.neon.outputs.target }} # Assuming setup action outputs target
+          CARGO_BUILD_TARGET: ${{ steps.neon.outputs.target }}
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
-        # Use bun run to execute the build script defined in package.json
         run: bun run ${{ matrix.cfg.script }}
 
       - name: Pack Platform Binary
         id: pack
+        # This step involves changing directories *within* the package directory
+        working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          mkdir -p dist
-          # bun pack outputs the filename directly to stdout
-          # Pack the specific platform package if it exists, otherwise pack root? Check logic.
-          # Assuming you have package.json inside ./platforms/${{ matrix.cfg.platform }}
+          # Create dist directory at the REPO ROOT for consistency
+          mkdir -p ../dist
+          # Change to the platform-specific directory *within* markdown-it-gladest
           cd ./platforms/${{ matrix.cfg.platform }}
-          FILENAME=$(bun pack --outdir ../../dist) # Output dir relative to current dir
-          cd ../../ # Return to root
+          # Pack and output to the REPO ROOT dist directory
+          FILENAME=$(bun pack --outdir ../../dist) # Adjust output path relative to current dir
+          # No need to cd back, filename is captured
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-          echo "Packed file: dist/${FILENAME}"
-          ls -l dist
+          echo "Packed file: ../dist/${FILENAME}" # Log the correct path
+          ls -l ../dist # List contents of the root dist directory
 
+      # Release Asset step runs at the root level, needs path relative to root
       - name: Release Asset
         if: ${{ inputs.github-release && inputs.tag != '' }}
         uses: softprops/action-gh-release@v2.0.4
         with:
+          # Path is relative to the REPO ROOT where the dist dir was created
           files: ./dist/${{ steps.pack.outputs.filename }}
           tag_name: ${{ inputs.tag }}
-          # token: ${{ secrets.GITHUB_TOKEN }} # Default is usually fine
 
   main:
     name: Main Package
-    needs: [matrix] # Depends on matrix to potentially gatekeep, though runs independently of binaries
+    needs: [matrix] # Changed from binaries to matrix, as it doesn't depend on binary artifacts
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Needed for release upload
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          # fetch-depth: 0 # May be needed if pack requires git history, unlikely
+          # If the main package needs the bumped version, you might need fetch-depth: 0
+          # and potentially check out *after* the version bump commit is available (complex).
+          # Assuming for now it uses the version from the initially checked out ref.
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      # Assuming ./.github/actions/setup is not needed or handled differently for the main package
-      # If Neon Rust setup is still needed for main package steps, add it here:
-      # - name: Setup Neon Environment (Rust/Cross)
-      #   uses: ./.github/actions/setup
-      #   with:
-      #     use-rust: false # Or true if needed
+      # No Neon setup needed here based on the original workflow
 
+      # Run subsequent steps within the package directory
       - name: Install Dependencies
+        working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
-
-      # Note: If the 'main' package version needs updating, it should happen *before* this pack step.
-      # The current workflow only updates version in the 'binaries' job, which might be intended
-      # if only the binaries job commits the version bump applied to the root package.json.
-      # If 'main' needs the bumped version, checkout needs to happen *after* the 'binaries' job
-      # or the version bump needs to be coordinated differently. Assuming current logic is intended.
 
       - name: Pack Main Package
         id: pack
+        working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          mkdir -p dist
-          # bun pack outputs the filename directly to stdout
-          FILENAME=$(bun pack --outdir ./dist)
+          # Create dist directory at the REPO ROOT
+          mkdir -p ../dist
+          # Pack and output to the REPO ROOT dist directory
+          FILENAME=$(bun pack --outdir ../dist) # Adjust output path relative to working dir
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-          echo "Packed file: dist/${FILENAME}"
-          ls -l dist
+          echo "Packed file: ../dist/${FILENAME}" # Log the correct path
+          ls -l ../dist # List contents of the root dist directory
 
+      # Release Asset step runs at the root level, needs path relative to root
       - name: Release Main Package Asset
         if: ${{ inputs.github-release && inputs.tag != '' }}
         uses: softprops/action-gh-release@v2.0.4
         with:
+          # Path is relative to the REPO ROOT where the dist dir was created
           files: ./dist/${{ steps.pack.outputs.filename }}
           tag_name: ${{ inputs.tag }}
-          # token: ${{ secrets.GITHUB_TOKEN }} # Default is usually fine
