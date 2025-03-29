@@ -166,7 +166,7 @@ jobs:
           # Change to the platform-specific directory *within* markdown-it-gladest
           cd ./platforms/${{ matrix.cfg.platform }}
           # Pack and output to the REPO ROOT dist directory
-          FILENAME=$(bun pm pack --outdir ../../dist) # Adjust output path relative to current dir
+          FILENAME=$(bun pm pack --outdir ../../dist | grep '\.tgz$') # Adjust output path relative to current dir
           # No need to cd back, filename is captured
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
           echo "Packed file: ../dist/${FILENAME}" # Log the correct path
