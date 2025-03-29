@@ -13,10 +13,6 @@ inputs:
     description: "Install cross-rs?"
     required: false
     default: "false"
-  workspace:
-    description: "Path to the workspace containing package.json with neon-cli. Defaults to repo root." # Important for `bunx neon`
-    required: false
-    default: "."
 outputs:
   rust:
     description: "Rust version installed."
