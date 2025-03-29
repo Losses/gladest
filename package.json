@@ -3,5 +3,8 @@
   "workspaces": [
     "markdown-it-gladest",
     "markdown-compile-demo"
-  ]
+  ],
+  "dependencies": {
+    "@neon-rs/cli": "^0.1.82"
+  }
 }
