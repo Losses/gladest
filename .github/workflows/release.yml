@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       dryrun:
-        description: 'Dry run (no npm publish)'
+        description: "Dry run (no publish)"
         required: false
         type: boolean
         default: true
@@ -26,110 +26,214 @@ on:
           - prerelease
           - custom
       custom:
-        description: 'Custom version'
+        description: "Custom version"
         required: false
-        default: ''
+        default: ""
+
+# Define default shell for git commands if needed, though bash is default
+# defaults:
+#   run:
+#     shell: bash
 
 jobs:
   setup:
     name: Setup
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Needed for commit and tag push
     outputs:
       dryrun: ${{ steps.dryrun.outputs.dryrun }}
       publish: ${{ steps.publish.outputs.publish }}
-      ref: ${{ steps.tag.outputs.tag || github.event.repository.default_branch }}
+      ref: ${{ steps.tag.outputs.ref || github.ref }} # Use specific tag if created, otherwise triggering ref
       tag: ${{ steps.tag.outputs.tag || '' }}
+      version: ${{ steps.tag.outputs.version || '' }} # Pass the calculated version if needed elsewhere
     steps:
       - name: Validate Workflow Inputs
         if: ${{ inputs.version == 'custom' && inputs.custom == '' }}
         shell: bash
         run: |
-          echo '::error::No custom version number provided'
+          echo '::error::No custom version number provided when version is set to "custom"'
           exit 1
+
       - id: dryrun
-        name: Validate Dry Run Event
-        if: ${{ inputs.dryrun }}
+        name: Set Dry Run Output
         shell: bash
-        run: echo dryrun=true | tee -a $GITHUB_OUTPUT
+        run: echo "dryrun=${{ inputs.dryrun }}" | tee -a $GITHUB_OUTPUT
+
       - id: publish
-        name: Validate Publish Event
-        if: ${{ !inputs.dryrun }}
+        name: Validate Publish Event and Set Output
         shell: bash
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Check NPM_TOKEN only if actually publishing
+          NPM_TOKEN: ${{ !inputs.dryrun && secrets.NPM_TOKEN || 'dummy' }}
         run: |
-          if [[ -z $NPM_TOKEN ]]; then
-            echo "::error::Secret NPM_TOKEN is not defined for this GitHub repo."
+          if [[ "${{ !inputs.dryrun }}" == "true" && "$NPM_TOKEN" == "dummy" ]]; then
+            echo "::error::Secret NPM_TOKEN is not defined for this GitHub repo for a non-dry run."
             echo "::error::To publish to npm, this action requires:"
             echo "::error:: • an npm access token;"
             echo "::error:: • with Read-Write access to this project's npm packages;"
             echo "::error:: • stored as a repo secret named NPM_TOKEN."
-            echo "::error::See https://docs.npmjs.com/about-access-tokens for info about creating npm tokens."
-            echo "::error:: 💡 The simplest method is to create a Classic npm token of type Automation."
-            echo "::error:: 💡 For greater security, consider using a Granual access token."
-            echo "::error::See https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions for info about how to store GitHub repo secrets."
             exit 1
           fi
-          echo publish=true | tee -a $GITHUB_OUTPUT
+          echo "publish=${{ !inputs.dryrun }}" | tee -a $GITHUB_OUTPUT
+
       - name: Checkout Code
-        uses: actions/checkout@v3
-      - name: Setup Neon Environment
-        uses: ./.github/actions/setup
+        uses: actions/checkout@v4
+        # Fetch all history for version bumping and tagging
         with:
-          use-rust: false
-      - name: Tag Release
-        if: ${{ !inputs.dryrun }}
-        id: tag
+          fetch-depth: 0
+          # Persist credentials for git push
+          persist-credentials: true
+
+      # Setup Bun needed for 'bun version' command below
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      # Optional: Install dependencies if bun version needs project context (usually not needed just for bumping)
+      # - name: Install Dependencies
+      #   run: bun install --frozen-lockfile
+
+      # Setup Neon is likely not needed here if just doing versioning,
+      # unless the setup action itself is required for git/environment setup.
+      # Assuming it's not strictly needed for versioning itself.
+      # - name: Setup Neon Environment
+      #   uses: ./.github/actions/setup
+      #   with:
+      #     use-rust: false
+
+      - name: Bump Version, Commit, Tag, and Push
+        id: tag # Give this step an ID to easily access its outputs
+        if: ${{ !inputs.dryrun }} # Only run when not a dry run
         shell: bash
+        env:
+          # Use GITHUB_ACTOR and a standard noreply email for the commit
+          GIT_AUTHOR_NAME: "${{ github.actor }}"
+          GIT_AUTHOR_EMAIL: "${{ github.actor }}@users.noreply.github.com"
+          GIT_COMMITTER_NAME: "${{ github.actor }}"
+          GIT_COMMITTER_EMAIL: "${{ github.actor }}@users.noreply.github.com"
         run: |
-          git config --global user.name $ACTIONS_USER
-          git config --global user.email $ACTIONS_EMAIL
-          npm version -m 'v%s' '${{ (inputs.version == 'custom' && inputs.custom) || inputs.version }}'
+          # Configure git user (redundant with env vars above, but safe)
+          git config user.name "${GIT_AUTHOR_NAME}"
+          git config user.email "${GIT_COMMITTER_EMAIL}"
+
+          # Determine version argument
+          VERSION_ARG="${{ (inputs.version == 'custom' && inputs.custom) || inputs.version }}"
+          echo "Bumping version with: ${VERSION_ARG}"
+
+          # Update version in package.json using bun
+          bun version "${VERSION_ARG}"
+
+          # Get the new version from package.json
+          # Requires jq (usually available on ubuntu-latest runners)
+          NEW_VERSION=$(jq -r .version package.json)
+          if [[ -z "$NEW_VERSION" ]]; then
+            echo "::error::Could not determine new version from package.json"
+            exit 1
+          fi
+          echo "New version determined: ${NEW_VERSION}"
+
+          # Define the tag name
+          TAG_NAME="v${NEW_VERSION}"
+          echo "Tag name: ${TAG_NAME}"
+
+          # Stage the changes
+          git add package.json bun.lockb # Add lockfile too
+
+          # Commit the version change
+          git commit -m "chore(release): bump version to ${TAG_NAME}"
+
+          # Create the git tag
+          git tag "${TAG_NAME}" -m "Release ${TAG_NAME}"
+
+          # Push the commit and the tag
+          # Use --follow-tags to push the tag along with the commit
+          # Use --atomic for safer push (optional, requires Git >= 2.4)
           git push --follow-tags
-          echo tag=$(git describe --abbrev=0) | tee -a $GITHUB_OUTPUT
+
+          # Output the tag and ref for subsequent jobs
+          echo "tag=${TAG_NAME}" | tee -a $GITHUB_OUTPUT
+          echo "ref=refs/tags/${TAG_NAME}" | tee -a $GITHUB_OUTPUT
+          echo "version=${NEW_VERSION}" | tee -a $GITHUB_OUTPUT
 
   build:
     name: Build
     needs: [setup]
     permissions:
-      contents: write
-    uses: ./.github/workflows/build.yml
+      contents: write # Needed by build.yml for creating releases/uploading assets
+    uses: ./.github/workflows/build.yml # Assumes build.yml is the Bun-based one provided
     with:
+      # Use the specific tag ref created in setup if publishing, otherwise use the original trigger ref (e.g., default branch for dry run)
       ref: ${{ needs.setup.outputs.ref }}
+      # Pass the tag name created in setup if publishing
       tag: ${{ needs.setup.outputs.tag }}
-      update-version: ${{ !!needs.setup.outputs.dryrun }}
+      # Only tell build.yml to update version if it's a dry run (because setup didn't do it)
+      update-version: ${{ needs.setup.outputs.dryrun == 'true' }}
+      # Pass the original version input for build.yml to use if update-version is true
       version: ${{ (inputs.version == 'custom' && inputs.custom) || inputs.version }}
-      github-release: ${{ !!needs.setup.outputs.publish }}
+      # Only tell build.yml to create a GitHub release if actually publishing
+      github-release: ${{ needs.setup.outputs.publish == 'true' }}
+    # Pass secrets if build.yml requires them (e.g., for release upload)
+    # secrets: inherit # Or specify needed secrets
 
   publish:
-    name: Publish
-    if: ${{ needs.setup.outputs.publish }}
+    name: Publish to npm
+    # Only run if not a dry run AND the build job succeeded
+    if: ${{ needs.setup.outputs.publish == 'true' && needs.build.result == 'success' }}
     needs: [setup, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read # Needs read access to checkout the code/tag
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
+          # Checkout the specific tag created during setup
           ref: ${{ needs.setup.outputs.ref }}
-      - name: Setup Neon Environment
-        uses: ./.github/actions/setup
-        with:
-          use-rust: false
-      - name: Fetch
-        uses: robinraju/release-downloader@c39a3b234af58f0cf85888573d361fb6fa281534 # v1.10
+
+      # Setup Bun needed for 'bun publish'
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      # Optional: Install dependencies if publish needs local scripts/tools from the project
+      # - name: Install Dependencies
+      #   run: bun install --frozen-lockfile
+
+      # Setup Neon is likely not needed here if just publishing pre-built assets
+      # - name: Setup Neon Environment
+      #   uses: ./.github/actions/setup
+      #   with:
+      #     use-rust: false
+
+      - name: Download Release Assets (.tgz)
+        # Assumes build.yml uploaded .tgz files as release assets
+        uses: robinraju/release-downloader@v1.10
         with:
           tag: ${{ needs.setup.outputs.tag }}
-          fileName: "*.tgz"
-          out-file-path: ./dist
-      - name: Publish
+          fileName: "*.tgz" # Download all tgz files from the release
+          out-file-path: ./dist # Download them to a dist directory
+          # Use default GITHUB_TOKEN for downloading from the release
+          # token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List Downloaded Files
+        run: ls -l ./dist
+
+      - name: Publish Packages to npm
         shell: bash
         env:
+          # bun publish reads NODE_AUTH_TOKEN or NPM_TOKEN
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for p in ./dist/*.tgz ; do
-            npm publish --access public $p
+          # Check if any tgz files were downloaded
+          if ! ls ./dist/*.tgz > /dev/null 2>&1; then
+            echo "::error::No .tgz files found in ./dist to publish."
+            exit 1
+          fi
+
+          # Loop through each downloaded tgz and publish it
+          for package_path in ./dist/*.tgz; do
+            echo "Publishing ${package_path}..."
+            # Add --access public if these are public packages
+            # bun publish automatically detects registry from package.json, similar to npm
+            bun publish "$package_path" --access public
           done
+          echo "All packages published successfully."

@@ -4,29 +4,29 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'The branch, tag, or SHA to check out'
+        description: "The branch, tag, or SHA to check out"
         required: true
         type: string
       update-version:
-        description: 'Update version before building?'
+        description: "Update version before building?"
         required: false
         type: boolean
         default: false
       version:
-        description: 'Version update (ignored if update-version is false)'
+        description: "Version update type (ignored if update-version is false)"
         required: false
         type: string
-        default: 'patch'
+        default: "patch" # e.g., patch, minor, major, or specific version
       github-release:
-        description: 'Publish GitHub release?'
+        description: "Publish GitHub release?"
         required: false
         type: boolean
         default: false
       tag:
-        description: 'The release tag (ignored if github-release is false)'
+        description: "The release tag (ignored if github-release is false)"
         required: false
         type: string
-        default: ''
+        default: ""
 
 jobs:
   matrix:
@@ -36,102 +36,187 @@ jobs:
       matrix: ${{ steps.matrix.outputs.result }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-      - name: Setup Neon Environment
+          # Fetch depth 0 for version bumping if needed later, although version bump happens in binaries job
+          # fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        # with:
+        #   bun-version: latest # Optional: specify Bun version
+
+      # Assuming ./.github/actions/setup handles Rust/Cross environment
+      # and does not interfere with or require Node/npm specifically
+      - name: Setup Neon Environment (Rust/Cross)
         uses: ./.github/actions/setup
         with:
-          use-rust: false
+          use-rust: false # Keep this consistent with original, assuming setup action needs it
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
       - name: Look Up Matrix Data
         id: matrixData
         shell: bash
-        run: echo "json=$(npx neon show ci github | jq -rc)" | tee -a $GITHUB_OUTPUT
+        # Assuming neon-cli is a dev dependency installable via bun install
+        run: echo "json=$(bunx neon show ci github | jq -rc)" | tee -a $GITHUB_OUTPUT
+
       - name: Compute Matrix
         id: matrix
         uses: actions/github-script@v7
         with:
           script: |
             const platforms = ${{ steps.matrixData.outputs.json }};
-            const macOS = platforms.macOS.map(platform => {
-              return { os: "macos-latest", platform, script: "build" };
-            });
-            const windows = platforms.Windows.map(platform => {
-              return { os: "windows-latest", platform, script: "build" };
-            });
-            const linux = platforms.Linux.map(platform => {
-              return { os: "ubuntu-latest", platform, script: "cross" };
-            });
-            return [...macOS, ...windows, ...linux];
+            const matrix = [];
+            if (platforms.macOS) {
+              matrix.push(...platforms.macOS.map(platform => ({ os: "macos-latest", platform, script: "build" })));
+            }
+            if (platforms.Windows) {
+              matrix.push(...platforms.Windows.map(platform => ({ os: "windows-latest", platform, script: "build" })));
+            }
+            if (platforms.Linux) {
+              matrix.push(...platforms.Linux.map(platform => ({ os: "ubuntu-latest", platform, script: "cross" })));
+            }
+            console.log("Computed Matrix:", matrix);
+            // Ensure the output is valid JSON for fromJSON()
+            return matrix;
 
   binaries:
-    name: Binaries
+    name: Binaries (${{ matrix.cfg.platform }})
     needs: [matrix]
+    # Prevent job failure if matrix is empty
+    if: ${{ needs.matrix.outputs.matrix != '[]' }}
     strategy:
+      fail-fast: false # Keep building other platforms even if one fails
       matrix:
+        # fromJSON handles the stringified JSON array output correctly
         cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     runs-on: ${{ matrix.cfg.os }}
     permissions:
-      contents: write
+      contents: write # Needed for version commit and release upload
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-      - name: Setup Neon Environment
+          # Fetch all history needed for version bumping and potential tagging by release action
+          fetch-depth: 0
+          # Persist credentials for git operations if needed (e.g., pushing version bump)
+          # persist-credentials: true # Uncomment if you plan to push the version bump commit
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      # Setup Rust/Cross specific environment
+      - name: Setup Neon Environment (Rust/Cross)
         id: neon
         uses: ./.github/actions/setup
         with:
           use-cross: ${{ matrix.cfg.script == 'cross' }}
           platform: ${{ matrix.cfg.platform }}
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
       - name: Update Version
         if: ${{ inputs.update-version }}
         shell: bash
         run: |
-          git config --global user.name $ACTIONS_USER
-          git config --global user.email $ACTIONS_EMAIL
-          npm version ${{ inputs.version }} -m "v%s"
-      - name: Build
+          # Configure git user for commit
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+
+          # Update version in package.json using bun
+          bun version ${{ inputs.version }}
+
+          # Stage and commit the version change
+          git add package.json bun.lockb # Add lockfile too
+          # Use jq to get the new version for the commit message, similar to npm's %s
+          NEW_VERSION=$(jq -r .version package.json)
+          git commit -m "chore(release): bump version to v${NEW_VERSION}"
+          # git push # Optional: Push the commit if needed
+
+      - name: Build Binary
         shell: bash
         env:
-          CARGO_BUILD_TARGET: ${{ steps.neon.outputs.target }}
+          # Pass necessary env vars for cross-compilation or platform-specific builds
+          CARGO_BUILD_TARGET: ${{ steps.neon.outputs.target }} # Assuming setup action outputs target
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
-        run: npm run ${{ matrix.cfg.script }}
-      - name: Pack
+        # Use bun run to execute the build script defined in package.json
+        run: bun run ${{ matrix.cfg.script }}
+
+      - name: Pack Platform Binary
         id: pack
         shell: bash
         run: |
           mkdir -p dist
-          echo filename=$(basename $(npm pack ./platforms/${{ matrix.cfg.platform }} --silent --pack-destination=./dist --json | jq -r '.[0].filename')) | tee -a $GITHUB_OUTPUT
-      - name: Release
-        if: ${{ inputs.github-release }}
-        uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
+          # bun pack outputs the filename directly to stdout
+          # Pack the specific platform package if it exists, otherwise pack root? Check logic.
+          # Assuming you have package.json inside ./platforms/${{ matrix.cfg.platform }}
+          cd ./platforms/${{ matrix.cfg.platform }}
+          FILENAME=$(bun pack --outdir ../../dist) # Output dir relative to current dir
+          cd ../../ # Return to root
+          echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
+          echo "Packed file: dist/${FILENAME}"
+          ls -l dist
+
+      - name: Release Asset
+        if: ${{ inputs.github-release && inputs.tag != '' }}
+        uses: softprops/action-gh-release@v2.0.4
         with:
           files: ./dist/${{ steps.pack.outputs.filename }}
           tag_name: ${{ inputs.tag }}
+          # token: ${{ secrets.GITHUB_TOKEN }} # Default is usually fine
 
   main:
-    name: Main
-    needs: [matrix]
+    name: Main Package
+    needs: [matrix] # Depends on matrix to potentially gatekeep, though runs independently of binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed for release upload
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-      - name: Setup Neon Environment
-        uses: ./.github/actions/setup
-        with:
-          use-rust: false
-      - name: Pack
+          # fetch-depth: 0 # May be needed if pack requires git history, unlikely
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      # Assuming ./.github/actions/setup is not needed or handled differently for the main package
+      # If Neon Rust setup is still needed for main package steps, add it here:
+      # - name: Setup Neon Environment (Rust/Cross)
+      #   uses: ./.github/actions/setup
+      #   with:
+      #     use-rust: false # Or true if needed
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      # Note: If the 'main' package version needs updating, it should happen *before* this pack step.
+      # The current workflow only updates version in the 'binaries' job, which might be intended
+      # if only the binaries job commits the version bump applied to the root package.json.
+      # If 'main' needs the bumped version, checkout needs to happen *after* the 'binaries' job
+      # or the version bump needs to be coordinated differently. Assuming current logic is intended.
+
+      - name: Pack Main Package
         id: pack
         shell: bash
         run: |
           mkdir -p dist
-          echo "filename=$(npm pack --silent --pack-destination=./dist)" | tee -a $GITHUB_OUTPUT
-      - name: Release
-        if: ${{ inputs.github-release }}
-        uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
+          # bun pack outputs the filename directly to stdout
+          FILENAME=$(bun pack --outdir ./dist)
+          echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
+          echo "Packed file: dist/${FILENAME}"
+          ls -l dist
+
+      - name: Release Main Package Asset
+        if: ${{ inputs.github-release && inputs.tag != '' }}
+        uses: softprops/action-gh-release@v2.0.4
         with:
           files: ./dist/${{ steps.pack.outputs.filename }}
           tag_name: ${{ inputs.tag }}
+          # token: ${{ secrets.GITHUB_TOKEN }} # Default is usually fine
