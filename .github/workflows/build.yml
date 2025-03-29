@@ -49,7 +49,9 @@ jobs:
       - name: Setup Neon Environment (Rust/Cross)
         uses: ./.github/actions/setup
         with:
-          use-rust: false
+          use-cross: ${{ matrix.cfg.script == 'cross' }}
+          platform: ${{ matrix.cfg.platform }}
+          workspace: ./markdown-it-gladest
 
       # Run subsequent steps within the package directory
       - name: Install Dependencies

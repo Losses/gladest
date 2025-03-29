@@ -1,76 +1,99 @@
-name: 'Setup Neon'
-description: 'Setup the Neon toolchain.'
+name: "Setup Neon with Bun"
+description: "Setup the Neon toolchain using Bun."
 inputs:
   platform:
-    description: 'Platform being built for.'
+    description: "Platform being built for (used to compute Rust target)."
     required: false
-    default: ''
+    default: ""
   use-rust:
-    description: 'Install Rust?'
+    description: "Install Rust toolchain?"
     required: false
-    default: 'true'
+    default: "true"
   use-cross:
-    description: 'Install cross-rs?'
+    description: "Install cross-rs?"
     required: false
-    default: 'false'
+    default: "false"
   workspace:
-    description: 'Path to workspace being setup.'
+    description: "Path to the workspace containing package.json with neon-cli. Defaults to repo root." # Important for `bunx neon`
     required: false
-    default: '.'
+    default: "."
 outputs:
   rust:
-    description: 'Rust version installed.'
+    description: "Rust version installed."
     value: ${{ steps.rust.outputs.version }}
-  node:
-    description: 'Node version installed.'
-    value: ${{ steps.node.outputs.version }}
+  bun:
+    description: "Bun version used."
+    value: ${{ steps.bun.outputs.version }}
   target:
-    description: 'Rust target architecture installed.'
+    description: "Rust target architecture computed."
     value: ${{ steps.target.outputs.target }}
 runs:
   using: "composite"
   steps:
+    # Load environment variables like RUST_VERSION from .env if present
     - name: Set Environment Variables
       uses: falti/dotenv-action@d1cd55661714e830a6e26f608f81d36e23424fed # v1.1.2
       with:
-        path: ./.github/.env
+        path: ./.github/.env # Adjust path if your .env is elsewhere
         export-variables: true
         keys-case: bypass
-    - name: Install Node
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ env.NODE_VERSION }}
-        registry-url: ${{ env.NPM_REGISTRY }}
-        cache: npm
-    - name: Install Dependencies
-      shell: bash  
-      run: npm ci   
+
+    # Setup Bun runtime
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      # Bun handles its own caching implicitly with bun install
+      # No need to specify version here unless required, uses project's bun.lockb or latest
+
+    # Removed 'npm ci' - Assuming caller workflow handles 'bun install' in the correct workspace
+
+    # Compute Rust target using neon-cli via bunx
+    # Requires neon-cli to be installed in the specified workspace by the caller workflow
     - name: Compute Rust Target
-      if: ${{ inputs['use-rust'] == 'true' }}
+      if: ${{ inputs['use-rust'] == 'true' && inputs.platform != '' }}
       id: target
       shell: bash
-      run: echo target=$(npx neon list-platforms | jq -r '.["${{ inputs.platform }}"]') | tee -a $GITHUB_OUTPUT
-      working-directory: ${{ inputs.workspace }}
+      run: |
+        echo "Attempting to compute Rust target for platform '${{ inputs.platform }}' using bunx neon in workspace '${{ inputs.workspace }}'"
+        # Ensure neon-cli is executable via bunx in the target workspace
+        TARGET=$(bunx neon list-platforms | jq -r '.["${{ inputs.platform }}"]')
+        echo "Computed target: ${TARGET}"
+        echo "target=${TARGET}" | tee -a $GITHUB_OUTPUT
+      working-directory: ${{ inputs.workspace }} # Critical: run where neon-cli should be found
+
+    # Install Rust toolchain if requested
     - name: Install Rust
       if: ${{ inputs['use-rust'] == 'true' }}
       uses: actions-rs/toolchain@v1
       with:
-        toolchain: ${{ env.RUST_VERSION }}
+        # Use RUST_VERSION from .env or default to stable
+        toolchain: ${{ env.RUST_VERSION || 'stable' }}
+        # Use computed target if available
         target: ${{ steps.target.outputs.target }}
         override: true
+
+    # Install cross-rs if requested
     - name: Install cross-rs
       if: ${{ inputs['use-cross'] == 'true' }}
       uses: baptiste0928/cargo-install@v2
       with:
         crate: cross
-    - name: Node Version
-      id: node
+
+    # Output Bun version
+    - name: Get Bun Version
+      id: bun
       shell: bash
       run: |
-        echo version=$(node -e 'console.log(process.versions.node)') | tee -a $GITHUB_OUTPUT
-    - name: Rust Version
+        echo version=$(bun -v) | tee -a $GITHUB_OUTPUT
+
+    # Output Rust version if installed
+    - name: Get Rust Version
       if: ${{ inputs['use-rust'] == 'true' }}
       id: rust
       shell: bash
       run: |
-        echo version=$(cargo -Vv | fgrep release: | cut -d' ' -f2) | tee -a $GITHUB_OUTPUT
+        if command -v cargo &> /dev/null; then
+          echo version=$(cargo -Vv | grep release: | cut -d' ' -f2) | tee -a $GITHUB_OUTPUT
+        else
+          echo "Cargo not found, skipping Rust version output."
+          echo version="" | tee -a $GITHUB_OUTPUT # Output empty string if Rust wasn't installed
+        fi
