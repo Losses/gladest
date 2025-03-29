@@ -1,10 +1,9 @@
 // src/index.cts
-// This module is the CJS entry point for the library.
-
 import type MarkdownIt from "markdown-it";
 import type {
   Options as MarkdownItOptions,
   StateBlock,
+  StateInline, // Import StateInline
   Token,
   Renderer,
 } from "markdown-it";
@@ -38,26 +37,203 @@ interface InternalRustOptions {
 }
 
 // Use this declaration to assign types to the addon's exports.
-// It tells TypeScript what functions are available on the object
-// imported from './load.cjs'.
 declare module "./load.cjs" {
   /**
    * Renders a LaTeX formula string into an HTML img tag (exported from Rust).
    * @param formula The LaTeX code (without delimiters).
-   * @param delimiter The delimiter used ("$$" or "$$$").
+   * @param delimiter The delimiter used ("$$" or "$").
    * @param options Rendering options (format, ppi).
    * @returns HTML string (<img> tag or error message/span).
-   * @throws Will throw if serious internal error occurs in Rust/Neon layer,
-   *         but typically returns error HTML string for rendering errors.
    */
   function renderLatex(
     formula: string,
-    delimiter: string,
-    options: InternalRustOptions // Use the specific internal options type
+    delimiter: string, // Keep delimiter for potential future use in Rust or logging
+    options: InternalRustOptions
   ): string;
+}
 
-  // Add other functions exported by your Rust code here, if any.
-  // e.g., function anotherRustFunction(arg: number): boolean;
+// Block Rule for $$
+function gladstBlockRule(
+  state: StateBlock,
+  startLine: number,
+  endLine: number,
+  silent: boolean
+): boolean {
+  const startMarker = "$$";
+  const endMarker = "$$";
+  const pos = state.bMarks[startLine] + state.tShift[startLine];
+  const max = state.eMarks[startLine];
+
+  if (!state.src.startsWith(startMarker, pos)) {
+    return false;
+  }
+
+  // Check for quick end on the same line: $$ formula $$
+  const firstLineEndMarkerPos = state.src.indexOf(
+    endMarker,
+    pos + startMarker.length
+  );
+  if (
+    firstLineEndMarkerPos !== -1 &&
+    firstLineEndMarkerPos <= max - endMarker.length
+  ) {
+    if (
+      firstLineEndMarkerPos === pos + startMarker.length &&
+      state.src.slice(
+        pos + startMarker.length,
+        pos + startMarker.length + endMarker.length
+      ) === endMarker
+    ) {
+      // Handle $$$$ case or similar - treat as empty? Maybe okay.
+    }
+
+    if (silent) {
+      return true;
+    }
+
+    const content = state.src
+      .slice(pos + startMarker.length, firstLineEndMarkerPos)
+      .trim();
+    const token = state.push("gladst_block_math", "div", 0);
+    token.block = true;
+    token.content = content;
+    token.markup = startMarker;
+    token.map = [startLine, startLine + 1];
+    state.line = startLine + 1;
+    return true;
+  }
+
+  // Multi-line block: search for ending '$$' on subsequent lines
+  let nextLine = startLine + 1;
+  const contentLines: string[] = [];
+  contentLines.push(state.src.slice(pos + startMarker.length, max).trim()); // Rest of the first line
+
+  while (nextLine < endLine) {
+    const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
+    const lineMax = state.eMarks[nextLine];
+    const lineText = state.src.slice(lineStart, lineMax).trim(); // Trim for easy comparison
+
+    // Check if the entire line is the end marker
+    if (lineText === endMarker) {
+      if (silent) {
+        return true;
+      }
+      // Found the end marker on its own line
+      const token = state.push("gladst_block_math", "div", 0);
+      token.block = true;
+      token.content = contentLines.join("\n").trim();
+      token.markup = startMarker;
+      token.map = [startLine, nextLine + 1];
+      state.line = nextLine + 1;
+      return true; // <-- Exit: Found end marker
+    }
+
+    // Check if the end marker is at the *end* of the current line
+    if (lineText.endsWith(endMarker)) {
+      if (silent) {
+        return true;
+      }
+      // Found end marker at the end of the current line
+      contentLines.push(
+        lineText.slice(0, lineText.length - endMarker.length).trim()
+      ); // Add content before marker
+      const token = state.push("gladst_block_math", "div", 0);
+      token.block = true;
+      token.content = contentLines.join("\n").trim();
+      token.markup = startMarker;
+      token.map = [startLine, nextLine + 1];
+      state.line = nextLine + 1;
+      return true; // <-- Exit: Found end marker
+    }
+
+    // If neither 'if' above returned, it's a content line
+    contentLines.push(
+      state.src.slice(state.bMarks[nextLine], state.eMarks[nextLine])
+    ); // Keep original spacing/indent
+    nextLine++;
+  }
+
+  // End marker not found after checking all lines
+  return false;
+}
+
+// Inline Rule for $
+function gladstInlineRule(state: StateInline, silent: boolean): boolean {
+  const startMarker = "$";
+  const endMarker = "$";
+  const pos = state.pos;
+
+  if (state.src.charCodeAt(pos) !== 0x24 /* $ */) {
+    return false;
+  }
+
+  const prevChar = pos > 0 ? state.src.charCodeAt(pos - 1) : -1;
+  if (prevChar === 0x5c /* \ */) {
+    return false;
+  } // Escaped dollar
+  if (state.src.charCodeAt(pos + 1) === 0x24 /* $ */) {
+    return false;
+  } // Let block rule handle $$
+
+  let foundClosing = false;
+  let endPos = -1;
+  let currentPos = pos + startMarker.length;
+
+  while (currentPos < state.posMax) {
+    const charCode = state.src.charCodeAt(currentPos);
+
+    // Check for closing marker first
+    if (charCode === 0x24 /* $ */) {
+      const nextChar =
+        currentPos + 1 < state.posMax
+          ? state.src.charCodeAt(currentPos + 1)
+          : -1;
+      if (nextChar === 0x24) {
+        // Part of $$
+        currentPos++; // Skip the second '$'
+        // Continue loop normally to handle potential content after $$
+      } else {
+        // Found valid closing $
+        foundClosing = true;
+        endPos = currentPos;
+        break; // Exit the while loop
+      }
+    }
+    // Check for escaped characters
+    else if (charCode === 0x5c /* \ */) {
+      currentPos++; // Skip the escaped character as well
+      // Continue loop normally
+    }
+    // Check for newline (disallow inline math spanning lines)
+    else if (charCode === 0x0a /* \n */) {
+      break; // Exit the while loop, closing marker not found on this line
+    }
+
+    // If none of the special conditions caused a break or modification,
+    // just advance the position.
+    currentPos++;
+  } // End of while loop
+
+  if (!foundClosing || endPos < 0) {
+    return false; // Closing marker not found
+  }
+
+  // We found a valid sequence
+  if (silent) {
+    return true;
+  }
+
+  const content = state.src.slice(pos + startMarker.length, endPos).trim();
+  if (!content) {
+    return false; // Reject empty formulas like '$ $'
+  }
+
+  const token = state.push("gladst_inline_math", "span", 0);
+  token.markup = startMarker;
+  token.content = content;
+
+  state.pos = endPos + endMarker.length; // Move position past the closing '$'
+  return true;
 }
 
 function gladstPlugin(md: MarkdownIt, options?: GladstPluginOptions): void {
@@ -68,105 +244,38 @@ function gladstPlugin(md: MarkdownIt, options?: GladstPluginOptions): void {
       typeof options?.ppi === "number" && options.ppi > 0 ? options.ppi : null,
   };
 
-  function gladstBlockRule(
-    state: StateBlock,
-    startLine: number,
-    endLine: number,
-    silent: boolean
-  ): boolean {
-    let nextLine: number;
-    const start = state.bMarks[startLine] + state.tShift[startLine];
-
-    if (state.src.charCodeAt(start) !== 0x24 /* $ */) {
-      return false;
-    }
-
-    let marker: string | null = null;
-    if (state.src.startsWith("$$", start)) {
-      marker = "$$";
-    } else if (state.src.startsWith("$", start)) {
-      marker = "$";
-    } else {
-      return false;
-    }
-
-    const markup = marker;
-
-    nextLine = startLine;
-    let found = false;
-    const contentLines: string[] = [];
-
-    while (nextLine < endLine) {
-      nextLine++;
-      if (nextLine >= endLine) break;
-
-      const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
-      const lineMax = state.eMarks[nextLine];
-      const lineText = state.src.slice(lineStart, lineMax).trim();
-
-      if (lineText === marker) {
-        found = true;
-        break;
-      }
-      contentLines.push(
-        state.src.slice(state.bMarks[nextLine], state.eMarks[nextLine])
-      );
-    }
-
-    if (!found) {
-      return false;
-    }
-
-    if (silent) {
-      return true;
-    }
-
-    const contentEndLine = nextLine;
-    const content = contentLines.join("\n").trim();
-
-    const token = state.push("gladst_render", "div", 0);
-    token.markup = markup;
-    token.content = content;
-    token.info = marker;
-    token.map = [startLine, contentEndLine + 1];
-    token.block = true;
-
-    state.line = contentEndLine + 1;
-
-    return true;
-  }
-
-  // Register the block rule
-  md.block.ruler.before("fence", "gladst_block", gladstBlockRule, {
-    alt: ["paragraph", "reference", "blockquote", "list", "hr", "html_block"],
-  });
-
-  md.renderer.rules.gladst_render = (
-    tokens: Token[],
-    idx: number,
-    _options: MarkdownItOptions,
-    _env: unknown,
-    _self: Renderer
-  ): string => {
-    const token = tokens[idx];
-    const formula = token.content;
-    const delimiter = token.info;
-
+  // Common rendering logic (extracted)
+  function renderFormula(
+    formula: string,
+    delimiter: string,
+    isBlock: boolean
+  ): string {
     if (!formula || !delimiter) {
+      const type = isBlock ? "Block" : "Inline";
       console.warn(
-        "[markdown-it-gladst] Token missing content or info:",
-        token
+        `[markdown-it-gladst] ${type} token missing content or info.`
       );
-      return `<div class="gladst-error-block">Internal Plugin Error: Token invalid</div>`;
+      const tag = isBlock ? "div" : "span";
+      return `<${tag} class="gladst-error-${
+        isBlock ? "block" : "inline"
+      }">Internal Plugin Error: Token invalid</${tag}>`;
     }
 
     try {
-      // *** Use the imported addon directly ***
       const htmlOutput = addon.renderLatex(formula, delimiter, internalOptions);
-      return htmlOutput;
+      // Wrap the output from Rust (assuming it's just the core like <img> or error span)
+      const wrapperTag = isBlock ? "div" : "span";
+      const wrapperClass = `gladst-${isBlock ? "block" : "inline"}`;
+      // Simple check if Rust already returned an error structure
+      if (
+        htmlOutput.startsWith('<span class="gladst-error') ||
+        htmlOutput.startsWith('<div class="gladst-error')
+      ) {
+        return htmlOutput; // Return Rust error directly
+      }
+      // Wrap successful render
+      return `<${wrapperTag} class="${wrapperClass}">${htmlOutput}</${wrapperTag}>`;
     } catch (error: unknown) {
-      // This catches errors thrown *by the Neon layer or addon loading*,
-      // not usually formula rendering errors (which return error HTML).
       const safeFormula = formula.replace(/</g, "<").replace(/>/g, ">");
       const safeError =
         error instanceof Error
@@ -176,11 +285,44 @@ function gladstPlugin(md: MarkdownIt, options?: GladstPluginOptions): void {
         `[markdown-it-gladst] Critical error calling native renderLatex for formula:\n${formula}\n`,
         error
       );
-      return `<div class="gladst-error-block" title="${safeError.replace(
-        /"/g,
-        '"'
-      )}">Critical Error rendering block: ${delimiter}${safeFormula}${delimiter}</div>`;
+      const tag = isBlock ? "div" : "span";
+      const errClass = `gladst-error-${isBlock ? "block" : "inline"}`;
+      const title = `title="${safeError.replace(/"/g, '"')}"`;
+      return `<${tag} class="${errClass}" ${title}>Critical Error rendering: ${delimiter}${safeFormula}${delimiter}</${tag}>`;
     }
+  }
+
+  // Register the block rule for $$
+  md.block.ruler.before("fence", "gladst_block", gladstBlockRule, {
+    alt: ["paragraph", "reference", "blockquote", "list", "hr", "html_block"],
+  });
+
+  // Register the inline rule for $
+  // Run after 'escape' rule but before emphasis, links etc.
+  md.inline.ruler.after("escape", "gladst_inline", gladstInlineRule);
+
+  // Renderer for block math ($$)
+  md.renderer.rules.gladst_block_math = (
+    tokens: Token[],
+    idx: number,
+    _options: MarkdownItOptions,
+    _env: unknown,
+    _self: Renderer
+  ): string => {
+    const token = tokens[idx];
+    return renderFormula(token.content, token.markup, true); // true for isBlock
+  };
+
+  // Renderer for inline math ($)
+  md.renderer.rules.gladst_inline_math = (
+    tokens: Token[],
+    idx: number,
+    _options: MarkdownItOptions,
+    _env: unknown,
+    _self: Renderer
+  ): string => {
+    const token = tokens[idx];
+    return renderFormula(token.content, token.markup, false); // false for isBlock
   };
 }
 

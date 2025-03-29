@@ -23,7 +23,9 @@ The Normal distribution, also known as the Gaussian distribution, is one of the 
 
 The probability density function (PDF) of a normal distribution is given by:
 
-$$f(x) = \\frac{1}{\\sigma\\sqrt{2\\pi}} e^{-\\frac{1}{2}\\left(\\frac{x-\\mu}{\\sigma}\\right)^2}$$
+$$
+f(x) = \\frac{1}{\\sigma\\sqrt{2\\pi}} e^{-\\frac{1}{2}\\left(\\frac{x-\\mu}{\\sigma}\\right)^2}
+$$
 
 Where:
 - $\\mu$ is the mean (expected value)
@@ -42,7 +44,9 @@ Where:
 
 5. The moment generating function (MGF) is:
 
-$$M_X(t) = e^{\\mu t + \\frac{1}{2}\\sigma^2 t^2}$$
+$$
+M_X(t) = e^{\\mu t + \\frac{1}{2}\\sigma^2 t^2}
+$$
 
 ## Applications
 
