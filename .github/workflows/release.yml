@@ -12,23 +12,6 @@ on:
         required: false
         type: boolean
         default: true
-      version:
-        description: 'Version component to update (or "custom" to provide exact version)'
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-          - prepatch
-          - preminor
-          - premajor
-          - prerelease
-          - custom
-      custom:
-        description: "Custom version"
-        required: false
-        default: ""
 
 jobs:
   setup:
@@ -43,13 +26,6 @@ jobs:
       tag: ${{ steps.tag.outputs.tag || '' }}
       version: ${{ steps.tag.outputs.version || '' }}
     steps:
-      - name: Validate Workflow Inputs
-        if: ${{ inputs.version == 'custom' && inputs.custom == '' }}
-        shell: bash
-        run: |
-          echo '::error::No custom version number provided when version is set to "custom"'
-          exit 1
-
       - id: dryrun
         name: Set Dry Run Output
         shell: bash
@@ -77,69 +53,6 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      # Dependencies are not strictly needed for 'bun version', but jq is.
-      # jq is usually pre-installed on ubuntu-latest runners.
-
-      - name: Bump Version, Commit, Tag, and Push
-        id: tag
-        if: ${{ !inputs.dryrun }}
-        working-directory: ./markdown-it-gladest
-        shell: bash
-        env:
-          GIT_AUTHOR_NAME: "${{ github.actor }}"
-          GIT_AUTHOR_EMAIL: "${{ github.actor }}@users.noreply.github.com"
-          GIT_COMMITTER_NAME: "${{ github.actor }}"
-          GIT_COMMITTER_EMAIL: "${{ github.actor }}@users.noreply.github.com"
-        run: |
-          echo "=-=-=-= Debug Info =-=-=-="
-          echo "Current directory: $(pwd)"
-          echo "Listing node_modules/.bin:"
-          ls -l ./node_modules/.bin || echo "node_modules/.bin not found or empty"
-          echo "Checking bunx neon --version:"
-          bunx neon --version || echo "bunx neon failed"
-          echo "Checking bunx neon-cli --version:"
-          bunx neon-cli --version || echo "bunx neon-cli failed"
-          echo "=-=-=-=-=-=-=-=-=-=-=-=-="
-
-          # Configure git user (redundant with env vars, but safe)
-          # Git config is global, so doesn't need working-directory
-          git config --global user.name "${GIT_AUTHOR_NAME}"
-          git config --global user.email "${GIT_COMMITTER_EMAIL}"
-
-          VERSION_ARG="${{ (inputs.version == 'custom' && inputs.custom) || inputs.version }}"
-          echo "Bumping version with: ${VERSION_ARG}"
-
-          # bun version runs in the working directory, finds package.json
-          bun version "${VERSION_ARG}"
-
-          # jq reads package.json from the working directory
-          NEW_VERSION=$(jq -r .version package.json)
-          if [[ -z "$NEW_VERSION" ]]; then
-            echo "::error::Could not determine new version from package.json"
-            exit 1
-          fi
-          echo "New version determined: ${NEW_VERSION}"
-          TAG_NAME="v${NEW_VERSION}"
-          echo "Tag name: ${TAG_NAME}"
-
-          # git add paths are relative to the working directory
-          git add package.json bun.lockb
-
-          # git commit operates at repo level but commits staged changes from working dir
-          git commit -m "chore(release): bump version to ${TAG_NAME}"
-
-          # git tag operates at repo level
-          git tag "${TAG_NAME}" -m "Release ${TAG_NAME}"
-
-          # git push operates at repo level
-          # Ensure the upstream is set correctly if needed, checkout should handle default 'origin'
-          git push --follow-tags
-
-          # Outputs don't change
-          echo "tag=${TAG_NAME}" | tee -a $GITHUB_OUTPUT
-          echo "ref=refs/tags/${TAG_NAME}" | tee -a $GITHUB_OUTPUT
-          echo "version=${NEW_VERSION}" | tee -a $GITHUB_OUTPUT
-
   build:
     name: Build
     needs: [setup]
@@ -149,12 +62,6 @@ jobs:
     with:
       ref: ${{ needs.setup.outputs.ref }}
       tag: ${{ needs.setup.outputs.tag }}
-      # Logic: Only tell build.yml to bump version IF it was a dry run in setup
-      update-version: ${{ needs.setup.outputs.dryrun == 'true' }}
-      version: ${{ (inputs.version == 'custom' && inputs.custom) || inputs.version }}
-      # Logic: Only tell build.yml to create the GitHub release IF setup determined we should publish
-      github-release: ${{ needs.setup.outputs.publish == 'true' }}
-    # secrets: inherit # Uncomment if build.yml needs secrets like GITHUB_TOKEN (implicitly available)
 
   publish:
     name: Publish to npm
