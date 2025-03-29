@@ -1,0 +1,12 @@
+[package]
+name = "gladest-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.97"
+derive_typst_intoval = "0.3.0"
+typst = "0.13.1"
+typst-as-lib = { version = "0.14.1", features = ["packages", "reqwest"] }
+typst-render = "0.13.1"
+typst-svg = "0.13.1"
