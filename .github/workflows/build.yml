@@ -185,7 +185,7 @@ jobs:
           # Create dist directory at the REPO ROOT
           mkdir -p ../dist
           # Pack and output to the REPO ROOT dist directory
-          FILENAME=$(bun pack --outdir ../dist  | grep '\.tgz$') # Adjust output path relative to working dir
+          FILENAME=$(bun pm pack --outdir ../dist  | grep '\.tgz$') # Adjust output path relative to working dir
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
           echo "Packed file: ../dist/${FILENAME}" # Log the correct path
           ls -l ../dist # List contents of the root dist directory
