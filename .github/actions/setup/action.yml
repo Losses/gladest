@@ -44,9 +44,11 @@ runs:
     # Requires neon-cli to be installed in the specified workspace by the caller workflow
     - name: Compute Rust Target
       if: ${{ inputs['use-rust'] == 'true' && inputs.platform != '' }}
+      working-directory: ./markdown-it-gladest
       id: target
       shell: bash
       run: |
+        bun install
         echo "=-=-=-= Debug Info =-=-=-="
         echo "Current directory: $(pwd)"
         echo "Listing node_modules/.bin:"
@@ -55,10 +57,9 @@ runs:
 
         echo "Attempting to compute Rust target for platform '${{ inputs.platform }}' using bunx neon in workspace './markdown-it-gladest'"
         # Ensure neon-cli is executable via bunx in the target workspace
-        TARGET=$(bunx neon list-platforms | jq -r '.["${{ inputs.platform }}"]')
+        TARGET=$(bun run neon list-platforms | jq -r '.["${{ inputs.platform }}"]')
         echo "Computed target: ${TARGET}"
         echo "target=${TARGET}" | tee -a $GITHUB_OUTPUT
-      working-directory: ./markdown-it-gladest
 
     # Install Rust toolchain if requested
     - name: Install Rust
