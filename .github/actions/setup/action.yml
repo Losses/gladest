@@ -47,6 +47,12 @@ runs:
       id: target
       shell: bash
       run: |
+        echo "=-=-=-= Debug Info =-=-=-="
+        echo "Current directory: $(pwd)"
+        echo "Listing node_modules/.bin:"
+        ls -l ../node_modules/.bin || echo "node_modules/.bin not found or empty"
+        echo "=-=-=-=-=-=-=-=-=-=-=-=-="
+
         echo "Attempting to compute Rust target for platform '${{ inputs.platform }}' using bunx neon in workspace './markdown-it-gladest'"
         # Ensure neon-cli is executable via bunx in the target workspace
         TARGET=$(bunx neon list-platforms | jq -r '.["${{ inputs.platform }}"]')
