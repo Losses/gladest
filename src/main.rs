@@ -144,7 +144,7 @@ fn render_formulas_in_html(
     pb_formulas: Option<&ProgressBar>,
 ) -> Result<String> {
     let document = Html::parse_document(html_content);
-    let selector = Selector::parse("eq").expect("Invalid selector 'eq'"); // Panic 安全，因为选择器是硬编码的
+    let selector = Selector::parse("eq").expect("Invalid selector 'eq'");
 
     let mut processed_html_string = document.html();
     let mut formula_tasks = Vec::new();
@@ -184,10 +184,11 @@ fn render_formulas_in_html(
         &format!("{:8}", file_name)
     };
 
+    let formula_count = formula_tasks.len();
     let local_pb;
     let pb_formulas_ref = match pb_formulas {
         Some(pb) => {
-            pb.set_length(formula_tasks.len() as u64);
+            pb.set_length(formula_count as u64);
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template(
@@ -200,7 +201,7 @@ fn render_formulas_in_html(
             pb
         }
         None => {
-            local_pb = ProgressBar::new(formula_tasks.len() as u64);
+            local_pb = ProgressBar::new(formula_count as u64);
             local_pb.set_style(
                 ProgressStyle::default_bar()
                     .template(&format!(
@@ -217,6 +218,7 @@ fn render_formulas_in_html(
 
     let processed_html_string_mutex = Arc::new(Mutex::new(processed_html_string));
     let render_errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let progress_counter = Arc::new(Mutex::new(0u64));
 
     formula_tasks
         .into_par_iter()
@@ -271,13 +273,15 @@ fn render_formulas_in_html(
                  }
             }
 
-
-            pb_formulas_ref.inc(1);
+            let mut counter = progress_counter.lock().unwrap();
+            *counter += 1;
+            pb_formulas_ref.set_position(*counter);
         });
 
     if pb_formulas.is_none() {
         pb_formulas_ref.finish_and_clear();
     } else {
+        pb_formulas_ref.set_position(formula_count as u64);
         pb_formulas_ref.finish();
     }
 
@@ -383,24 +387,29 @@ fn run_batch(
     format: Format,
 ) -> Result<()> {
     let multi_progress = MultiProgress::new();
-
     let errors = Arc::new(Mutex::new(Vec::<(PathBuf, anyhow::Error)>::new()));
 
-    paths.into_par_iter().for_each(|path| {
-        let file_pb = multi_progress.add(ProgressBar::new(0));
+    let progress_bars: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let pb = multi_progress.add(ProgressBar::new(0));
+            (path.clone(), pb)
+        })
+        .collect();
 
+    progress_bars.into_par_iter().for_each(|(path, file_pb)| {
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-        if let Err(e) = process_single_file(path, output_dir_option, ppi, format, Some(&file_pb)) {
+        if let Err(e) = process_single_file(&path, output_dir_option, ppi, format, Some(&file_pb)) {
             let error_record = (path.clone(), e);
             errors.lock().unwrap().push(error_record);
             file_pb.abandon_with_message(format!("Error processing {}", file_name));
+        } else {
+            file_pb.finish_with_message(format!("Finished {}", file_name));
         }
     });
 
-    multi_progress
-        .clear()
-        .context("Failed to clear multi progress")?;
+    multi_progress.clear().unwrap();
 
     let collected_errors = errors.lock().unwrap();
     if !collected_errors.is_empty() {
