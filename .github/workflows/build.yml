@@ -53,12 +53,12 @@ jobs:
 
       # Run subsequent steps within the package directory
       - name: Install Dependencies
-        working-directory: ./markdown-it-gladest # <--- Added working directory
+        working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
 
       - name: Look Up Matrix Data
         id: matrixData
-        working-directory: ./markdown-it-gladest # <--- Added working directory
+        working-directory: ./markdown-it-gladest
         shell: bash
         run: echo "json=$(bunx neon show ci github | jq -rc)" | tee -a $GITHUB_OUTPUT
 
@@ -122,15 +122,36 @@ jobs:
         working-directory: ./markdown-it-gladest
         shell: bash
         run: |
+          echo "=-=-=-= Debug Info =-=-=-="
+          echo "Current directory: $(pwd)"
+          echo "Listing node_modules/.bin:"
+          ls -l ./node_modules/.bin || echo "node_modules/.bin not found or empty"
+          echo "Checking bunx neon --version:"
+          bunx neon --version || echo "bunx neon failed"
+          echo "Checking bunx neon-cli --version:"
+          bunx neon-cli --version || echo "bunx neon-cli failed"
+          echo "=-=-=-=-=-=-=-=-=-=-=-=-="
+
+          echo "Running neon bump..."
+          bunx neon-cli bump --binaries platforms
+          bun version ${{ inputs.version }}
+
+          echo "Configuring Git..."
           git config --global user.name "${{ github.actor }}"
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
           bun version ${{ inputs.version }}
           # Git add needs paths relative to the working directory
-          git add package.json bun.lockb
+          echo "Staging changes..."
+          git add .
           NEW_VERSION=$(jq -r .version package.json)
-          # Commit happens at repo root level, but changes are staged from working dir
-          git commit -m "chore(release): bump version to v${NEW_VERSION}"
-          # git push # Optional push
+
+          if ! git diff --staged --quiet; then
+            NEW_VERSION=$(jq -r .version package.json)
+            git commit -m "chore(release): bump version to v${NEW_VERSION}"
+            echo "Changes committed."
+          else
+            echo "No changes to commit."
+          fi
 
       - name: Build Binary
         working-directory: ./markdown-it-gladest
