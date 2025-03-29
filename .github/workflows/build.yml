@@ -134,9 +134,6 @@ jobs:
           bunx neon-cli --version || echo "bunx neon-cli failed"
           echo "=-=-=-=-=-=-=-=-=-=-=-=-="
 
-          echo "Running neon bump..."
-          bunx neon-cli bump --binaries platforms
-
           echo "Configuring Git..."
           git config --global user.name "${{ github.actor }}"
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
