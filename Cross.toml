@@ -1,20 +1,21 @@
-
-# Cross.toml
-
-# Configuration for x86_64 Linux target
 [target.x86_64-unknown-linux-gnu]
 # Commands to run inside the cross container before building
 pre-build = [
-    "dpkg --add-architecture arm64 && apt-get update && apt-get install --assume-yes libssl-dev:arm64",
-    "apt-get update && apt-get install --assume-yes libssl-dev pkg-config",
+    "apt-get update && apt-get install --assume-yes libssl-dev pkg-config"
 ]
-# You might need to specify a Docker image if the default one doesn't work well
-# image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:latest"
+# Environment variables for the build process inside the container
+# Tell openssl-sys where the base directory is (containing include/ and lib/)
+OPENSSL_DIR = "/usr"
+# Explicitly set PKG_CONFIG_PATH just in case it's needed
+PKG_CONFIG_PATH = "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"
 
-# Configuration for aarch64 Linux target
+
 [target.aarch64-unknown-linux-gnu]
+# Commands to run inside the cross container before building
 pre-build = [
-    "apt-get update && apt-get install --assume-yes libssl-dev pkg-config",
+    "apt-get update && apt-get install --assume-yes libssl-dev pkg-config"
 ]
-# image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:latest"
-
+# Environment variables for the build process inside the container
+OPENSSL_DIR = "/usr"
+# Adjust PKG_CONFIG_PATH for the arm64 architecture
+PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"
