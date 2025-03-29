@@ -134,7 +134,6 @@ jobs:
 
           echo "Running neon bump..."
           bunx neon-cli bump --binaries platforms
-          bun version ${{ inputs.version }}
 
           echo "Configuring Git..."
           git config --global user.name "${{ github.actor }}"
