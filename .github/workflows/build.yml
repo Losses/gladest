@@ -158,22 +158,19 @@ jobs:
         run: |
           echo "*** Debug: Start of Pack Platform Binary"
           echo "Initial PWD: $(pwd)"
-          ls -la # Show contents of markdown-it-gladest
 
-          # Define REPO ROOT dist directory (absolute path for clarity in logs)
+          # Define REPO ROOT dist directory (absolute path)
           REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
           echo "Target REPO DIST directory (absolute): ${REPO_DIST_DIR}"
 
-          # Create dist directory at the REPO ROOT
-          echo "Creating directory: ${REPO_DIST_DIR}"
+          # Create dist directory at the REPO ROOT if it doesn't exist
           mkdir -p "${REPO_DIST_DIR}"
           echo "Listing REPO_ROOT (${GITHUB_WORKSPACE}) contents after mkdir:"
           ls -la "${GITHUB_WORKSPACE}"
 
-          # Platform specific directory within the package
+          # Platform specific directory relative to current PWD
           PLATFORM_SUBDIR="./platforms/${{ matrix.cfg.platform }}"
-          echo "Checking platform subdirectory: ${PLATFORM_SUBDIR}"
-          ls -la "${PLATFORM_SUBDIR}" || echo "WARNING: Platform subdirectory ${PLATFORM_SUBDIR} not found or empty before packing."
+          echo "Platform subdirectory: ${PLATFORM_SUBDIR}"
 
           # Define the output directory relative to the *current* PWD (markdown-it-gladest) for the pack command if needed
           # However, bun pm pack in later versions might support absolute paths better. Let's try absolute first.
@@ -200,46 +197,40 @@ jobs:
 
           # Pack and output to the REPO ROOT dist directory
           echo "Executing: bun pm pack --destination ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
-          PACK_OUTPUT=$(bun pm pack --destination "${BUN_OUTDIR_FROM_PLATFORM_DIR}")
-          echo "bun pm pack output: ${PACK_OUTPUT}"
+          # Capture potentially multi-line output, get the line ending in .tgz
+          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR_FROM_PLATFORM_DIR}" | grep '\.tgz$' | head -n 1)
+          echo "bun pm pack absolute path output: ${PACK_OUTPUT_ABSPATH}"
 
-          # Extract filename reliably
-          # Assuming output is like: "- my-package-platform-v1.0.0.tgz" or just the filename
-          FILENAME=$(echo "${PACK_OUTPUT}" | grep '\.tgz$')
-
-          if [[ -z "$FILENAME" ]]; then
-            echo "::error::Failed to capture packed filename from bun output."
-            # List the target dir anyway to see if *anything* appeared
+          # Error check: Did we get an absolute path?
+          if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
+            echo "::error::Failed to capture packed filename path from bun output."
             echo "Listing target directory (${BUN_OUTDIR_FROM_PLATFORM_DIR}) contents:"
             ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}" || echo "Target directory listing failed."
             exit 1
           fi
+
+          # Extract just the filename using basename
+          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
           echo "Captured filename: ${FILENAME}"
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
 
-          # Verify the packed file exists in the *intended* repo root dist directory
-          PACKED_FILE_PATH="${BUN_OUTDIR_FROM_PLATFORM_DIR}/${FILENAME}" # Relative path from current PWD
-          PACKED_FILE_ABS_PATH="${REPO_DIST_DIR}/${FILENAME}" # Absolute path
-
-          echo "Verifying packed file at relative path from $(pwd): ${PACKED_FILE_PATH}"
+          # Verification (Optional but recommended)
+          # Verify the file exists at the *correct absolute path*
+          PACKED_FILE_ABS_PATH="${REPO_DIST_DIR}/${FILENAME}"
           echo "Verifying packed file at absolute path: ${PACKED_FILE_ABS_PATH}"
 
-          echo "Listing contents of target directory (${BUN_OUTDIR_FROM_PLATFORM_DIR}):"
-          ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}"
-
-          # Check if the specific file exists using the relative path from current PWD
-          if [[ -f "${PACKED_FILE_PATH}" ]]; then
-             echo "Packed file ${FILENAME} successfully found in target directory."
+          if [[ -f "${PACKED_FILE_ABS_PATH}" ]]; then
+             echo "Packed file ${FILENAME} successfully found in target directory (${REPO_DIST_DIR})."
+             echo "Listing contents of target directory (${REPO_DIST_DIR}):"
+             ls -l "${REPO_DIST_DIR}"
           else
-             echo "::warning::Packed file ${FILENAME} NOT found at ${PACKED_FILE_PATH}."
-             echo "Listing target directory again (${BUN_OUTDIR_FROM_PLATFORM_DIR}):"
-             ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}" || echo "Target directory listing failed."
-             echo "Checking absolute path: ${PACKED_FILE_ABS_PATH}"
-             ls -l "${PACKED_FILE_ABS_PATH}" || echo "Absolute path listing failed."
-             # Go back one level to check if bun packed to parent dir mistakenly
-             echo "Listing parent directory (../../..) contents:"
-             ls -l ../../../ || echo "Parent dir listing failed."
-
+             echo "::warning::Packed file ${FILENAME} NOT found at ${PACKED_FILE_ABS_PATH}."
+             echo "Listing target directory contents (${REPO_DIST_DIR}):"
+             ls -l "${REPO_DIST_DIR}" || echo "Target directory listing failed."
+             # Also list where we ran pack from, just in case
+             echo "Listing current directory ($(pwd)) contents:"
+             ls -l
+             exit 1 # Fail the step if verification fails
           fi
 
           echo "*** Debug: End of Pack Platform Binary"
@@ -286,7 +277,7 @@ jobs:
           # Create dist directory at the REPO ROOT
           mkdir -p ../dist
           # Pack and output to the REPO ROOT dist directory
-          FILENAME=$(bun pm pack --destination ../dist  | grep '\.tgz$') # Adjust output path relative to working dir
+          FILENAME=$(bun pm pack --destination ../dist | grep '\.tgz$') # Adjust output path relative to working dir
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
           echo "Packed file: ../dist/${FILENAME}" # Log the correct path
           ls -l ../dist # List contents of the root dist directory
