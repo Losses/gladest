@@ -36,11 +36,8 @@ jobs:
         shell: bash
         run: |
           echo "Looking up matrix data using bunx neon..."
-          # Ensure neon-cli is available via bunx in the workspace
-          # Might need `bun install` in this directory first if not done globally
           JSON_OUTPUT=$(bunx neon show ci github | jq -rc .)
           echo "Raw JSON Output: $JSON_OUTPUT" # Debug output
-          # Check if JSON is empty or invalid
           if [[ -z "$JSON_OUTPUT" || "$JSON_OUTPUT" == "null" ]]; then
             echo "::error::Failed to get matrix data from 'bunx neon show ci github'. Output was empty or null."
             exit 1
@@ -82,27 +79,26 @@ jobs:
             console.log("Computed Matrix:", matrix);
             if (matrix.length === 0) {
                console.log("Warning: Computed build matrix is empty. Check 'neon show ci github' output and logic.");
-               // Decide if this should be a failure or just an empty output
-               // For now, return empty array, let downstream jobs handle `if` condition.
             }
-            return matrix;
+            // Use github.libs.outputs.set instead of return for complex objects
+            // await github.libs.outputs.set('result', JSON.stringify(matrix)); <-- Incorrect for github-script v7
+            core.setOutput('result', JSON.stringify(matrix)); // Correct way for github-script v7
 
   binaries:
     name: Build Binaries (${{ matrix.cfg.platform }})
     needs: [matrix]
-    if: ${{ needs.matrix.outputs.matrix != '[]' && needs.matrix.outputs.matrix != '' }} # Check for empty matrix
+    if: ${{ needs.matrix.outputs.matrix != '[]' && needs.matrix.outputs.matrix != '' }}
     strategy:
       fail-fast: false
       matrix:
         cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     runs-on: ${{ matrix.cfg.os }}
-    # No permissions needed here anymore
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # Keep fetch-depth: 0 if build scripts rely on git history
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -122,7 +118,7 @@ jobs:
 
       - name: Setup Neon Environment (Rust/Cross)
         id: neon
-        uses: ./.github/actions/setup # Assuming this action is in the root .github/actions
+        uses: ./.github/actions/setup
         with:
           use-cross: ${{ matrix.cfg.script == 'cross' }}
           platform: ${{ matrix.cfg.platform }}
@@ -145,38 +141,63 @@ jobs:
         shell: bash
         run: |
           echo "*** Packing Platform Binary for ${{ matrix.cfg.platform }} ***"
+          # Define the dist directory relative to the workspace root for consistency
           REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
+          mkdir -p "${REPO_DIST_DIR}"
+
           PLATFORM_SUBDIR="./platforms/${{ matrix.cfg.platform }}"
-          # Ensure the platform subdir exists (build should create it)
           if [[ ! -d "$PLATFORM_SUBDIR" ]]; then
             echo "::error::Platform directory ${PLATFORM_SUBDIR} not found after build."
-            ls -l ./platforms # Show available platform dirs
+            ls -l ./platforms
             exit 1
           fi
-          # Create REPO ROOT dist directory
-          mkdir -p "${REPO_DIST_DIR}"
-          # Relative path from platform subdir to repo dist dir
-          BUN_OUTDIR_FROM_PLATFORM_DIR="../../../dist"
-          echo "Packing from ${PLATFORM_SUBDIR} to ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
+
+          # Pack *into* the REPO_DIST_DIR from the platform subdir's context
+          # Note: bun pm pack --destination path is relative to CWD if not absolute
+          # We want the file IN ${REPO_DIST_DIR}, so let's make destination absolute
+          echo "Packing from ${PLATFORM_SUBDIR} to ${REPO_DIST_DIR}"
           cd "${PLATFORM_SUBDIR}"
-          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR_FROM_PLATFORM_DIR}" | grep '\.tgz$' | head -n 1)
+          # Capture only the filename, assuming pack outputs the full path
+          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${REPO_DIST_DIR}" | grep '\.tgz$' | head -n 1)
+
           if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
             echo "::error::Failed to capture packed filename path from bun output in $(pwd)."
-            exit 1
-          fi
-          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
-          echo "Packed ${FILENAME} to ${REPO_DIST_DIR}"
-          # Verify file existence
-          if [[ ! -f "${REPO_DIST_DIR}/${FILENAME}" ]]; then
-            echo "::error::Verification failed: ${FILENAME} not found in ${REPO_DIST_DIR}"
+            # Show contents of target dir for debugging
+            echo "Contents of ${REPO_DIST_DIR}:"
             ls -l "${REPO_DIST_DIR}"
             exit 1
           fi
-          echo "filename=${FILENAME}" # Output relative filename for potential use
+
+          # Extract just the filename
+          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
+          echo "Packed file should be: ${FILENAME} in ${REPO_DIST_DIR}"
+
+          # Verify the file exists in the expected location
+          if [[ ! -f "${REPO_DIST_DIR}/${FILENAME}" ]]; then
+            echo "::error::Verification failed: ${FILENAME} not found in ${REPO_DIST_DIR}"
+            echo "Contents of ${REPO_DIST_DIR}:"
+            ls -l "${REPO_DIST_DIR}"
+            exit 1
+          fi
+
+          echo "Packed ${FILENAME} successfully to ${REPO_DIST_DIR}"
+          # Output the filename for the upload step
+          echo "filename=${FILENAME}" >> $GITHUB_OUTPUT
+          # Output the platform for the artifact name
+          echo "platform=${{ matrix.cfg.platform }}" >> $GITHUB_OUTPUT
+
+      - name: Upload Platform Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Unique name for each platform artifact
+          name: binary-${{ steps.pack.outputs.platform }}
+          # Path to the single file created in this job's dist dir
+          path: ${{ github.workspace }}/dist/${{ steps.pack.outputs.filename }}
+          retention-days: 1 # Keep artifacts for a short time
 
   main:
     name: Build Main Package
-    needs: [matrix] # Depends only on matrix generation
+    needs: [matrix] # Still depends only on matrix generation
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -187,7 +208,6 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      # Build Steps (Keep working-directory) 
       - name: Install Dependencies
         working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
@@ -198,48 +218,87 @@ jobs:
         shell: bash
         run: |
           echo "*** Packing Main Package ***"
+          # Define the dist directory relative to the workspace root
           REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
           mkdir -p "${REPO_DIST_DIR}"
-          # Relative path from main package dir to repo dist dir
-          BUN_OUTDIR="../dist"
-          echo "Packing from $(pwd) to ${BUN_OUTDIR}"
-          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR}" | grep '\.tgz$' | head -n 1)
+
+          # Pack *into* the REPO_DIST_DIR from the main package dir's context
+          echo "Packing from $(pwd) to ${REPO_DIST_DIR}"
+          # Capture only the filename
+          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${REPO_DIST_DIR}" | grep '\.tgz$' | head -n 1)
+
           if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
             echo "::error::Failed to capture packed filename path from bun output in $(pwd)."
-            exit 1
-          fi
-          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
-          echo "Packed ${FILENAME} to ${REPO_DIST_DIR}"
-          # Verify file existence
-          if [[ ! -f "${REPO_DIST_DIR}/${FILENAME}" ]]; then
-            echo "::error::Verification failed: ${FILENAME} not found in ${REPO_DIST_DIR}"
+             # Show contents of target dir for debugging
+            echo "Contents of ${REPO_DIST_DIR}:"
             ls -l "${REPO_DIST_DIR}"
             exit 1
           fi
-          echo "filename=${FILENAME}" # Output relative filename
+
+          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
+          echo "Packed file should be: ${FILENAME} in ${REPO_DIST_DIR}"
+
+          # Verify the file exists in the expected location
+          if [[ ! -f "${REPO_DIST_DIR}/${FILENAME}" ]]; then
+            echo "::error::Verification failed: ${FILENAME} not found in ${REPO_DIST_DIR}"
+            echo "Contents of ${REPO_DIST_DIR}:"
+            ls -l "${REPO_DIST_DIR}"
+            exit 1
+          fi
+
+          echo "Packed ${FILENAME} successfully to ${REPO_DIST_DIR}"
+          # Output the filename for the upload step
+          echo "filename=${FILENAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload Main Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-package # Specific name for the main package artifact
+          # Path to the single file created in this job's dist dir
+          path: ${{ github.workspace }}/dist/${{ steps.pack.outputs.filename }}
+          retention-days: 1 # Keep artifacts for a short time
 
   collect-and-upload:
     name: Collect and Upload Packages
-    # Run if matrix was generated, even if some builds failed (adjust if needed)
-    # Needs *all* build jobs that produce artifacts
-    needs: [binaries, main]
-    # Run even if preceding jobs fail to potentially upload partial results?
-    # `if: always()` might be too broad. `if: success() || failure()` allows collecting partial artifacts.
-    # Let's stick to `if: success()` for now, meaning all builds must pass.
-    if: success() # Only run if all dependencies succeeded
+    needs: [binaries, main] # Depends on all binary builds AND the main package build
+    # Run only if all dependency jobs succeeded
+    if: success()
     runs-on: ubuntu-latest
     steps:
-      # No checkout needed if we only operate on paths from GITHUB_WORKSPACE
+      # No checkout needed here as we only deal with artifacts
 
-      - name: List expected dist directory contents (from previous jobs)
+      - name: Create Download Directory
+        run: mkdir -p all-packages
+
+      # actions/download-artifact@v4 downloads artifacts into subdirectories named after the artifact by default
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # No 'name' specified, downloads all artifacts from the run
+          path: all-packages # Download into the 'all-packages' directory
+
+      - name: Consolidate Packages
+        shell: bash
         run: |
-          echo "Listing contents of ${{ github.workspace }}/dist"
-          # This directory might not exist if no artifacts were created or placed correctly
-          ls -l "${{ github.workspace }}/dist" || echo "Dist directory not found or empty."
+          echo "Downloaded artifacts structure:"
+          ls -lR all-packages
+          # Create the final dist directory for upload
+          mkdir -p dist
+          echo "Moving all *.tgz files to ./dist"
+          # Find all .tgz files within the downloaded artifact subdirectories and move them to ./dist
+          find ./all-packages/ -mindepth 1 -type f -name '*.tgz' -exec mv {} ./dist/ \;
+          echo "Contents of ./dist after consolidation:"
+          ls -l ./dist
+
+      - name: List collected files before upload
+        run: |
+          echo "Listing contents of ./dist directory before final upload:"
+          ls -l dist/
 
       - name: Upload All Packages Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: packages # Artifact name the release workflow will download
-          path: ${{ github.workspace }}/dist/*.tgz # Upload all tgz files from the root dist dir
-          if-no-files-found: error # Fail if no tgz files are found
+          name: packages # Final artifact name expected by release process
+          path: ./dist/*.tgz # Upload all tgz files from the *local* dist dir created in this job
+          if-no-files-found: error # Fail if consolidation failed and no tgz files are present
+          retention-days: 5 # Keep the final artifact longer if needed
