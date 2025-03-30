@@ -146,7 +146,7 @@ jobs:
           CRATE_NAME="markdown-it-gladest"
           # Cargo usually replaces hyphens with underscores for the library filename
           CRATE_LIB_NAME=$(echo "$CRATE_NAME" | sed 's/-/_/g')
-          TARGET_DIR="./target/${{ steps.neon.outputs.target }}/release"
+          TARGET_DIR="../target/${{ steps.neon.outputs.target }}/release"
           PLATFORM_DIR="./platforms/${{ matrix.cfg.platform }}"
           DEST_FILE="${PLATFORM_DIR}/index.node"
 
