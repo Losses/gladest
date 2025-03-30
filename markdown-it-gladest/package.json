@@ -10,10 +10,8 @@
     "postcargo-build": "neon dist < cargo.log",
     "postcross-build": "neon dist -m /target < cross.log",
     "debug": "bun run cargo-build",
-    "build-node": "bun run cargo-cp-artifact -nc index.node -- cargo build -p markdown-it-gladest --release --message-format=json-render-diagnostics",
-    "cross-node": "bun run cargo-cp-artifact -nc index.node -- cross build -p markdown-it-gladest --release --message-format=json-render-diagnostics",
-    "build": "tsc && bun run build-node > cargo.log",
-    "cross": "tsc && bun run cross-node > cargo.log",
+    "build": "tsc && cargo build -p markdown-it-gladest --message-format=json-render-diagnostics --release > cargo.log",
+    "cross": "tsc && cross build -p markdown-it-gladest --message-format=json-render-diagnostics --release > cross.log",
     "prepack": "tsc && bunx neon update",
     "version": "bunx neon bump --binaries platforms && git add .",
     "release": "gh workflow run release.yml -f dryrun=false -f version=patch",
@@ -48,7 +46,6 @@
     "@neon-rs/cli": "^0.1.82",
     "@tsconfig/node20": "^20.1.4",
     "@types/node": "^20.11.16",
-    "cargo-cp-artifact": "^0.1.9",
     "typescript": "^5.3.3"
   },
   "dependencies": {

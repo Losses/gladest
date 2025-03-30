@@ -139,33 +139,65 @@ jobs:
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
         run: bun run ${{ matrix.cfg.script }}
 
-      - name: Move Binary to Platform Directory
+      - name: Copy Artifact to Platform Directory
+        working-directory: ./markdown-it-gladest # Ensure we are in the correct directory
         shell: bash
-        working-directory: ./markdown-it-gladest # Still operate from the main package dir
         run: |
-          echo "Moving compiled binary to platform directory..."
+          CRATE_NAME="markdown-it-gladest"
+          # Cargo usually replaces hyphens with underscores for the library filename
+          CRATE_LIB_NAME=$(echo "$CRATE_NAME" | sed 's/-/_/g')
+          TARGET_DIR="./target/${{ steps.neon.outputs.target }}/release"
           PLATFORM_DIR="./platforms/${{ matrix.cfg.platform }}"
-          SOURCE_BINARY="./index.node" # Default Neon output location
-          DEST_BINARY="${PLATFORM_DIR}/index.node"
+          DEST_FILE="${PLATFORM_DIR}/index.node"
 
-          if [[ ! -f "$SOURCE_BINARY" ]]; then
-            echo "::error::Compiled binary ${SOURCE_BINARY} not found after build step!"
-            ls -l . # List files in current dir for debugging
+          SOURCE_FILE=""
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            SOURCE_FILE="${TARGET_DIR}/lib${CRATE_LIB_NAME}.so"
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            SOURCE_FILE="${TARGET_DIR}/lib${CRATE_LIB_NAME}.dylib"
+          elif [[ "${{ runner.os }}" == "Windows" ]]; then
+            # Windows uses .dll and typically doesn't have the 'lib' prefix for cdylib
+            SOURCE_FILE="${TARGET_DIR}/${CRATE_LIB_NAME}.dll"
+          else
+            echo "::error::Unsupported runner OS: ${{ runner.os }}"
             exit 1
           fi
 
-          # Ensure platform directory exists (it should, if packing works)
+          echo "Attempting to copy artifact from: ${SOURCE_FILE}"
+          echo "Destination: ${DEST_FILE}"
+          echo "Target directory contents:"
+          ls -l "${TARGET_DIR}" || echo "Target directory listing failed."
+
+          # Check if the source file exists
+          if [[ ! -f "$SOURCE_FILE" ]]; then
+            echo "::error::Source artifact file not found: ${SOURCE_FILE}"
+             # Try alternative common naming (e.g., without lib prefix on macOS/Linux)
+            if [[ "${{ runner.os }}" == "Linux" || "${{ runner.os }}" == "macOS" ]]; then
+               ALT_SOURCE_FILE="${TARGET_DIR}/${CRATE_LIB_NAME}.$( [[ "${{ runner.os }}" == "Linux" ]] && echo "so" || echo "dylib" )"
+               if [[ -f "$ALT_SOURCE_FILE" ]]; then
+                  echo "Found alternative source file: ${ALT_SOURCE_FILE}"
+                  SOURCE_FILE="$ALT_SOURCE_FILE"
+               else
+                  echo "Alternative source file also not found: ${ALT_SOURCE_FILE}"
+                  exit 1
+               fi
+            else
+              exit 1
+            fi
+          fi
+
+          # Ensure the destination platform directory exists
           mkdir -p "$PLATFORM_DIR"
 
-          echo "Moving ${SOURCE_BINARY} to ${DEST_BINARY}"
-          mv "$SOURCE_BINARY" "$DEST_BINARY"
+          echo "Copying ${SOURCE_FILE} to ${DEST_FILE}"
+          cp "$SOURCE_FILE" "$DEST_FILE"
 
-          # Verify move
-          if [[ ! -f "$DEST_BINARY" ]]; then
-            echo "::error::Failed to move binary to ${DEST_BINARY}"
+          # Verify copy
+          if [[ ! -f "$DEST_FILE" ]]; then
+            echo "::error::Failed to copy artifact to ${DEST_FILE}"
             exit 1
           fi
-          echo "Binary moved successfully."
+          echo "Artifact copied successfully to ${DEST_FILE}"
 
       - name: Pack Platform Binary
         id: pack
