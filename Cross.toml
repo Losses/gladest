@@ -13,7 +13,9 @@ PKG_CONFIG_PATH = "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr
 [target.aarch64-unknown-linux-gnu]
 # Commands to run inside the cross container before building
 pre-build = [
-    "apt-get update && apt-get install --assume-yes libssl-dev pkg-config"
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install --assume-yes --no-install-recommends libssl-dev:arm64 pkg-config"
 ]
 # Environment variables for the build process inside the container
 OPENSSL_DIR = "/usr"
