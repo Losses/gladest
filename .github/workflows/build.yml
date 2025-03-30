@@ -199,8 +199,8 @@ jobs:
           echo "Packing from $(pwd) with relative outdir: ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
 
           # Pack and output to the REPO ROOT dist directory
-          echo "Executing: bun pm pack --outdir ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
-          PACK_OUTPUT=$(bun pm pack --outdir "${BUN_OUTDIR_FROM_PLATFORM_DIR}")
+          echo "Executing: bun pm pack --destination ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
+          PACK_OUTPUT=$(bun pm pack --destination "${BUN_OUTDIR_FROM_PLATFORM_DIR}")
           echo "bun pm pack output: ${PACK_OUTPUT}"
 
           # Extract filename reliably
@@ -286,7 +286,7 @@ jobs:
           # Create dist directory at the REPO ROOT
           mkdir -p ../dist
           # Pack and output to the REPO ROOT dist directory
-          FILENAME=$(bun pm pack --outdir ../dist  | grep '\.tgz$') # Adjust output path relative to working dir
+          FILENAME=$(bun pm pack --destination ../dist  | grep '\.tgz$') # Adjust output path relative to working dir
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
           echo "Packed file: ../dist/${FILENAME}" # Log the correct path
           ls -l ../dist # List contents of the root dist directory
