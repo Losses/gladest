@@ -89,45 +89,37 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Explicitly configure npm authentication via .npmrc
-          # This is often more reliable in CI than relying solely on NODE_AUTH_TOKEN env var
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
-          # Replace '@your-scope' with your actual npm scope if applicable
           echo "@fuuck:registry=https://registry.npmjs.org/" >> ~/.npmrc
-
           echo "Explicitly configured npm auth via ~/.npmrc"
 
-          # Use find to locate all .tgz files recursively within ./dist
-          # Check if any tgz files exist before proceeding
+          # Check if any tgz files exist *before* starting the loop
           if ! find ./dist -name '*.tgz' -print -quit | grep -q .; then
              echo "::error::No .tgz files found in ./dist or its subdirectories to publish."
              exit 1
           fi
 
           published_count=0
-          # Process each found tgz file
-          find ./dist -name '*.tgz' -print0 | while IFS= read -r -d $'\0' package_path; do
+          # Use Process Substitution <(...) to feed find results into the loop
+          # This avoids running the while loop in a subshell
+          while IFS= read -r -d $'\0' package_path; do
             echo "Publishing ${package_path} using 'bunx npm publish'..."
-            # Add --access public if these are public packages on npm
-            # Using bunx to invoke npm ensures we use the npm version potentially managed by bun
-            # Authentication should now be handled by ~/.npmrc
             if bunx npm publish "$package_path" --access public; then
               echo "Successfully published ${package_path}"
-              published_count=$((published_count + 1))
+              published_count=$((published_count + 1)) # Now updates the parent shell variable
             else
               echo "::error::Failed to publish ${package_path}"
-              # Decide if you want to exit on first failure or try publishing others
-              exit 1 # Exit on first failure
+              # Since the main shell has -e, this exit will fail the entire step
+              exit 1
             fi
-          done
+          done < <(find ./dist -name '*.tgz' -print0) # <<< Note the syntax here
 
-          # Final check after the loop
+          # This final check should now work correctly
+          # It's mainly a safeguard; the loop's exit 1 or successful completion is primary
           if [[ "$published_count" -eq 0 ]]; then
-            # This case might be redundant if the initial check works, but good for safety
-            echo "::error::No packages were successfully published."
+            echo "::error::Loop completed, but counter is still zero. This shouldn't happen if files were found."
             exit 1
           fi
 
           echo "Successfully published $published_count packages using npm."
-
           rm -f ~/.npmrc
