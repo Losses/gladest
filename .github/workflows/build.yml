@@ -7,30 +7,10 @@ on:
         description: "The branch, tag, or SHA to check out"
         required: true
         type: string
-      update-version:
-        description: "Update version before building?"
-        required: false
-        type: boolean
-        default: false
-      version:
-        description: "Version update type (ignored if update-version is false)"
-        required: false
-        type: string
-        default: "patch" # e.g., patch, minor, major, or specific version
-      github-release:
-        description: "Publish GitHub release?"
-        required: false
-        type: boolean
-        default: false
-      tag:
-        description: "The release tag (ignored if github-release is false)"
-        required: false
-        type: string
-        default: ""
 
 jobs:
   matrix:
-    name: Matrix
+    name: Generate Build Matrix
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.result }}
@@ -39,21 +19,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          # fetch-depth: 0 # Potentially needed if neon show ci uses git history, uncomment if necessary
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      # Setup Neon Environment - This uses a local action relative to the repo root.
-      # It should NOT have a working-directory set here.
-      - name: Setup Neon Environment (Rust/Cross)
-        uses: ./.github/actions/setup
-        with:
-          use-cross: ${{ matrix.cfg.script == 'cross' }}
-          platform: ${{ matrix.cfg.platform }}
-
-      # Run subsequent steps within the package directory
-      - name: Install Dependencies
+      # This step requires node_modules in markdown-it-gladest
+      - name: Install Root Dependencies (for neon cli lookup)
+        # Run at root first if neon cli depends on root node_modules,
+        # OR ensure markdown-it-gladest includes neon-cli devDependency. Assuming the latter.
         working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
 
@@ -61,46 +34,75 @@ jobs:
         id: matrixData
         working-directory: ./markdown-it-gladest
         shell: bash
-        run: echo "json=$(bunx neon show ci github | jq -rc)" | tee -a $GITHUB_OUTPUT
+        run: |
+          echo "Looking up matrix data using bunx neon..."
+          # Ensure neon-cli is available via bunx in the workspace
+          # Might need `bun install` in this directory first if not done globally
+          JSON_OUTPUT=$(bunx neon show ci github | jq -rc .)
+          echo "Raw JSON Output: $JSON_OUTPUT" # Debug output
+          # Check if JSON is empty or invalid
+          if [[ -z "$JSON_OUTPUT" || "$JSON_OUTPUT" == "null" ]]; then
+            echo "::error::Failed to get matrix data from 'bunx neon show ci github'. Output was empty or null."
+            exit 1
+          fi
+          echo "json=${JSON_OUTPUT}" | tee -a $GITHUB_OUTPUT
 
-      # Compute Matrix doesn't directly interact with files, uses previous step output.
-      # No working-directory needed here.
       - name: Compute Matrix
         id: matrix
         uses: actions/github-script@v7
         with:
           script: |
-            const platforms = ${{ steps.matrixData.outputs.json }};
+            const rawJson = '${{ steps.matrixData.outputs.json }}';
+            console.log("Raw JSON received in script:", rawJson);
+            if (!rawJson) {
+              core.setFailed("Matrix data JSON is empty.");
+              return;
+            }
+            let platforms;
+            try {
+              platforms = JSON.parse(rawJson);
+            } catch (e) {
+              core.setFailed(`Failed to parse matrix data JSON: ${e.message}. JSON was: ${rawJson}`);
+              return;
+            }
+
             const matrix = [];
-            if (platforms.macOS) {
+            // Add optional chaining for safety
+            if (platforms?.macOS) {
               matrix.push(...platforms.macOS.map(platform => ({ os: "macos-latest", platform, script: "build" })));
             }
-            if (platforms.Windows) {
+            if (platforms?.Windows) {
               matrix.push(...platforms.Windows.map(platform => ({ os: "windows-latest", platform, script: "build" })));
             }
-            if (platforms.Linux) {
+            if (platforms?.Linux) {
+              // Ensure Linux platforms are correctly mapped if needed
               matrix.push(...platforms.Linux.map(platform => ({ os: "ubuntu-latest", platform, script: "cross" })));
             }
+
             console.log("Computed Matrix:", matrix);
+            if (matrix.length === 0) {
+               console.log("Warning: Computed build matrix is empty. Check 'neon show ci github' output and logic.");
+               // Decide if this should be a failure or just an empty output
+               // For now, return empty array, let downstream jobs handle `if` condition.
+            }
             return matrix;
 
   binaries:
-    name: Binaries (${{ matrix.cfg.platform }})
+    name: Build Binaries (${{ matrix.cfg.platform }})
     needs: [matrix]
-    if: ${{ needs.matrix.outputs.matrix != '[]' }}
+    if: ${{ needs.matrix.outputs.matrix != '[]' && needs.matrix.outputs.matrix != '' }} # Check for empty matrix
     strategy:
       fail-fast: false
       matrix:
         cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     runs-on: ${{ matrix.cfg.os }}
-    permissions:
-      contents: write
+    # No permissions needed here anymore
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          fetch-depth: 0 # Needed for version bumping
+          fetch-depth: 0 # Keep fetch-depth: 0 if build scripts rely on git history
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -109,35 +111,22 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install openssl@3 pkg-config
-          # Set environment variables for openssl-sys crate to find Homebrew's OpenSSL
           echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
-          # Also add pkg-config path
           echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libffi)/lib/pkgconfig" >> $GITHUB_ENV
-
       - name: Install OpenSSL (Windows)
         if: runner.os == 'Windows'
         run: |
-          # vcpkg is usually pre-installed on GitHub Windows runners
-          # Ensure VCPKG_ROOT is set (usually automatic) and vcpkg is in PATH
-          echo "Installing OpenSSL via vcpkg..."
           vcpkg install openssl:${{ matrix.cfg.platform == 'win32-x64-msvc' && 'x64' || 'x86' }}-windows-static-md
-          # openssl-sys should auto-detect vcpkg installations if VCPKG_INSTALLATION_ROOT is set.
-          # If issues persist, uncomment and adapt the following:
-          # $VCPKG_INSTALL_DIR = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed/${{ matrix.cfg.platform == 'win32-x64-msvc' && 'x64' || 'x86' }}-windows-static-md"
-          # echo "OPENSSL_DIR=$VCPKG_INSTALL_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          # echo "OPENSSL_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append # If using static-md
-        shell: pwsh # Use PowerShell for Windows steps
+        shell: pwsh
 
-      # Setup Neon Environment - Uses local action relative to repo root.
       - name: Setup Neon Environment (Rust/Cross)
         id: neon
-        uses: ./.github/actions/setup
+        uses: ./.github/actions/setup # Assuming this action is in the root .github/actions
         with:
           use-cross: ${{ matrix.cfg.script == 'cross' }}
           platform: ${{ matrix.cfg.platform }}
 
-      # Run subsequent steps within the package directory
       - name: Install Dependencies
         working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
@@ -155,115 +144,50 @@ jobs:
         working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          echo "*** Debug: Start of Pack Platform Binary"
-          echo "Initial PWD: $(pwd)"
-
-          # Define REPO ROOT dist directory (absolute path)
+          echo "*** Packing Platform Binary for ${{ matrix.cfg.platform }} ***"
           REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
-          echo "Target REPO DIST directory (absolute): ${REPO_DIST_DIR}"
-
-          # Create dist directory at the REPO ROOT if it doesn't exist
-          mkdir -p "${REPO_DIST_DIR}"
-          echo "Listing REPO_ROOT (${GITHUB_WORKSPACE}) contents after mkdir:"
-          ls -la "${GITHUB_WORKSPACE}"
-
-          # Platform specific directory relative to current PWD
           PLATFORM_SUBDIR="./platforms/${{ matrix.cfg.platform }}"
-          echo "Platform subdirectory: ${PLATFORM_SUBDIR}"
-
-          # Define the output directory relative to the *current* PWD (markdown-it-gladest) for the pack command if needed
-          # However, bun pm pack in later versions might support absolute paths better. Let's try absolute first.
-          # BUN_OUTDIR="${REPO_DIST_DIR}" # Try absolute path
-
-          # *** If bun pm pack requires relative path from CWD:
-          # Change directory *temporarily* for packing if needed, OR calculate relative path
-          # Relative path from here (markdown-it-gladest) to REPO_DIST_DIR is "../dist"
-          BUN_OUTDIR="../dist"
-          echo "Using relative outdir for bun: ${BUN_OUTDIR}"
-          # *** End Relative Path Calculation
-
-          # Navigate to the directory containing the package.json specific to the platform binary
-          # Assuming the platform directory itself is the package to be packed
-          echo "Changing directory to platform subdirectory: ${PLATFORM_SUBDIR}"
-          cd "${PLATFORM_SUBDIR}"
-          echo "Current PWD after cd: $(pwd)"
-          ls -la # Show contents of platform dir before packing
-
-          # Define relative path from *this new PWD* to the REPO_DIST_DIR
-          # From markdown-it-gladest/platforms/<platform> to REPO_ROOT/dist is ../../../dist
-          BUN_OUTDIR_FROM_PLATFORM_DIR="../../../dist"
-          echo "Packing from $(pwd) with relative outdir: ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
-
-          # Pack and output to the REPO ROOT dist directory
-          echo "Executing: bun pm pack --destination ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
-          # Capture potentially multi-line output, get the line ending in .tgz
-          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR_FROM_PLATFORM_DIR}" | grep '\.tgz$' | head -n 1)
-          echo "bun pm pack absolute path output: ${PACK_OUTPUT_ABSPATH}"
-
-          # Error check: Did we get an absolute path?
-          if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
-            echo "::error::Failed to capture packed filename path from bun output."
-            echo "Listing target directory (${BUN_OUTDIR_FROM_PLATFORM_DIR}) contents:"
-            ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}" || echo "Target directory listing failed."
+          # Ensure the platform subdir exists (build should create it)
+          if [[ ! -d "$PLATFORM_SUBDIR" ]]; then
+            echo "::error::Platform directory ${PLATFORM_SUBDIR} not found after build."
+            ls -l ./platforms # Show available platform dirs
             exit 1
           fi
-
-          # Extract just the filename using basename
-          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
-          echo "Captured filename: ${FILENAME}"
-          echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-
-          # Verification (Optional but recommended)
-          # Verify the file exists at the *correct absolute path*
-          PACKED_FILE_ABS_PATH="${REPO_DIST_DIR}/${FILENAME}"
-          echo "Verifying packed file at absolute path: ${PACKED_FILE_ABS_PATH}"
-
-          if [[ -f "${PACKED_FILE_ABS_PATH}" ]]; then
-             echo "Packed file ${FILENAME} successfully found in target directory (${REPO_DIST_DIR})."
-             echo "Listing contents of target directory (${REPO_DIST_DIR}):"
-             ls -l "${REPO_DIST_DIR}"
-          else
-             echo "::warning::Packed file ${FILENAME} NOT found at ${PACKED_FILE_ABS_PATH}."
-             echo "Listing target directory contents (${REPO_DIST_DIR}):"
-             ls -l "${REPO_DIST_DIR}" || echo "Target directory listing failed."
-             # Also list where we ran pack from, just in case
-             echo "Listing current directory ($(pwd)) contents:"
-             ls -l
-             exit 1 # Fail the step if verification fails
+          # Create REPO ROOT dist directory
+          mkdir -p "${REPO_DIST_DIR}"
+          # Relative path from platform subdir to repo dist dir
+          BUN_OUTDIR_FROM_PLATFORM_DIR="../../../dist"
+          echo "Packing from ${PLATFORM_SUBDIR} to ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
+          cd "${PLATFORM_SUBDIR}"
+          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR_FROM_PLATFORM_DIR}" | grep '\.tgz$' | head -n 1)
+          if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
+            echo "::error::Failed to capture packed filename path from bun output in $(pwd)."
+            exit 1
           fi
-
-          echo "*** Debug: End of Pack Platform Binary"
-
-      # Release Asset step runs at the root level, needs path relative to root
-      - name: Release Asset
-        if: ${{ inputs.github-release && inputs.tag != '' }}
-        uses: softprops/action-gh-release@v2.0.4
-        with:
-          # Path is relative to the REPO ROOT where the dist dir was created
-          files: ./dist/${{ steps.pack.outputs.filename }}
-          tag_name: ${{ inputs.tag }}
+          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
+          echo "Packed ${FILENAME} to ${REPO_DIST_DIR}"
+          # Verify file existence
+          if [[ ! -f "${REPO_DIST_DIR}/${FILENAME}" ]]; then
+            echo "::error::Verification failed: ${FILENAME} not found in ${REPO_DIST_DIR}"
+            ls -l "${REPO_DIST_DIR}"
+            exit 1
+          fi
+          echo "filename=${FILENAME}" # Output relative filename for potential use
 
   main:
-    name: Main Package
-    needs: [matrix] # Changed from binaries to matrix, as it doesn't depend on binary artifacts
+    name: Build Main Package
+    needs: [matrix] # Depends only on matrix generation
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
-          # If the main package needs the bumped version, you might need fetch-depth: 0
-          # and potentially check out *after* the version bump commit is available (complex).
-          # Assuming for now it uses the version from the initially checked out ref.
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      # No Neon setup needed here based on the original workflow
-
-      # Run subsequent steps within the package directory
+      # Build Steps (Keep working-directory) 
       - name: Install Dependencies
         working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
@@ -273,66 +197,49 @@ jobs:
         working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          echo "*** Debug: Start of Pack Main Package"
-          echo "Initial PWD: $(pwd)"
-
-          # Define REPO ROOT dist directory (absolute path)
+          echo "*** Packing Main Package ***"
           REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
-          echo "Target REPO DIST directory (absolute): ${REPO_DIST_DIR}"
-
-          # Define output directory relative to *this* PWD for bun
-          # Relative path from markdown-it-gladest to REPO_ROOT/dist is ../dist
-          BUN_OUTDIR="../dist"
-          echo "Packing from $(pwd) with relative outdir: ${BUN_OUTDIR}"
-
-          # Create dist directory at the REPO ROOT if it doesn't exist
-          # Use absolute path for mkdir for robustness
           mkdir -p "${REPO_DIST_DIR}"
-
-          # Pack and capture the *absolute path* output
-          echo "Executing: bun pm pack --destination ${BUN_OUTDIR}"
-          # Capture potentially multi-line output, get the line ending in .tgz
+          # Relative path from main package dir to repo dist dir
+          BUN_OUTDIR="../dist"
+          echo "Packing from $(pwd) to ${BUN_OUTDIR}"
           PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR}" | grep '\.tgz$' | head -n 1)
-          echo "bun pm pack absolute path output: ${PACK_OUTPUT_ABSPATH}"
-
-          # Error check: Did we get an absolute path?
           if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
-            echo "::error::Failed to capture packed filename path from bun output."
-            echo "Listing target directory (${BUN_OUTDIR}) contents:"
-            ls -l "${BUN_OUTDIR}" || echo "Target directory listing failed (relative path)."
-            echo "Listing target directory (${REPO_DIST_DIR}) contents:"
-            ls -l "${REPO_DIST_DIR}" || echo "Target directory listing failed (absolute path)."
+            echo "::error::Failed to capture packed filename path from bun output in $(pwd)."
             exit 1
           fi
-
-          # Extract just the filename using basename
           FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
-          echo "Captured filename: ${FILENAME}"
-          echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-
-          # Verification (Optional but recommended)
-          # Verify the file exists at the *correct absolute path*
-          PACKED_FILE_ABS_PATH="${REPO_DIST_DIR}/${FILENAME}"
-          echo "Verifying packed file at absolute path: ${PACKED_FILE_ABS_PATH}"
-
-          if [[ -f "${PACKED_FILE_ABS_PATH}" ]]; then
-             echo "Packed file ${FILENAME} successfully found in target directory (${REPO_DIST_DIR})."
-             echo "Listing contents of target directory (${REPO_DIST_DIR}):"
-             ls -l "${REPO_DIST_DIR}"
-          else
-             echo "::warning::Packed file ${FILENAME} NOT found at ${PACKED_FILE_ABS_PATH}."
-             echo "Listing target directory contents (${REPO_DIST_DIR}):"
-             ls -l "${REPO_DIST_DIR}" || echo "Target directory listing failed."
-             exit 1 # Fail the step if verification fails
+          echo "Packed ${FILENAME} to ${REPO_DIST_DIR}"
+          # Verify file existence
+          if [[ ! -f "${REPO_DIST_DIR}/${FILENAME}" ]]; then
+            echo "::error::Verification failed: ${FILENAME} not found in ${REPO_DIST_DIR}"
+            ls -l "${REPO_DIST_DIR}"
+            exit 1
           fi
+          echo "filename=${FILENAME}" # Output relative filename
 
-          echo "*** Debug: End of Pack Main Package"
+  collect-and-upload:
+    name: Collect and Upload Packages
+    # Run if matrix was generated, even if some builds failed (adjust if needed)
+    # Needs *all* build jobs that produce artifacts
+    needs: [binaries, main]
+    # Run even if preceding jobs fail to potentially upload partial results?
+    # `if: always()` might be too broad. `if: success() || failure()` allows collecting partial artifacts.
+    # Let's stick to `if: success()` for now, meaning all builds must pass.
+    if: success() # Only run if all dependencies succeeded
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout needed if we only operate on paths from GITHUB_WORKSPACE
 
-      # Release Asset step runs at the root level, needs path relative to root
-      - name: Release Main Package Asset
-        if: ${{ inputs.github-release && inputs.tag != '' }}
-        uses: softprops/action-gh-release@v2.0.4
+      - name: List expected dist directory contents (from previous jobs)
+        run: |
+          echo "Listing contents of ${{ github.workspace }}/dist"
+          # This directory might not exist if no artifacts were created or placed correctly
+          ls -l "${{ github.workspace }}/dist" || echo "Dist directory not found or empty."
+
+      - name: Upload All Packages Artifact
+        uses: actions/upload-artifact@v4
         with:
-          # Path is relative to the REPO ROOT where the dist dir was created
-          files: ./dist/${{ steps.pack.outputs.filename }}
-          tag_name: ${{ inputs.tag }}
+          name: packages # Artifact name the release workflow will download
+          path: ${{ github.workspace }}/dist/*.tgz # Upload all tgz files from the root dist dir
+          if-no-files-found: error # Fail if no tgz files are found

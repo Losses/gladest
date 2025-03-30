@@ -1,30 +1,36 @@
+# .github/workflows/release.yml
 name: Release
 
 run-name: |
   ${{ (inputs.dryrun && 'Dry run')
-   || format('Release: {0}', (inputs.version == 'custom' && inputs.custom) || inputs.version) }}
+   || format('Release: {0}', inputs.version || 'Auto') }} # Adjust naming
 
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Version update type (patch, minor, major, specific version like 1.2.3)"
+        required: true
+        type: string
+        default: "patch"
       dryrun:
-        description: "Dry run (no publish)"
+        description: "Dry run (builds, checks, but no tag/publish/release)"
         required: false
         type: boolean
         default: true
 
 jobs:
   setup:
-    name: Setup
+    name: Setup & Version Bump
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Needed for commit and tag push
+      contents: write # Needed for version bump, commit, tag, push
     outputs:
       dryrun: ${{ steps.dryrun.outputs.dryrun }}
       publish: ${{ steps.publish.outputs.publish }}
-      ref: ${{ steps.tag.outputs.ref || github.ref }}
-      tag: ${{ steps.tag.outputs.tag || '' }}
-      version: ${{ steps.tag.outputs.version || '' }}
+      ref: ${{ steps.tag.outputs.ref || github.ref }} # ref will be the tag name if not dryrun
+      tag: ${{ steps.tag.outputs.tag || '' }} # The actual tag name (e.g., v1.0.1)
+      version: ${{ steps.tag.outputs.version || '' }} # Version number (e.g., 1.0.1)
     steps:
       - id: dryrun
         name: Set Dry Run Output
@@ -38,54 +44,48 @@ jobs:
           NPM_TOKEN: ${{ !inputs.dryrun && secrets.NPM_TOKEN || 'dummy' }}
         run: |
           if [[ "${{ !inputs.dryrun }}" == "true" && "$NPM_TOKEN" == "dummy" ]]; then
-            echo "::error::Secret NPM_TOKEN is not defined for this GitHub repo for a non-dry run."
-            # Add other error messages if needed
+            echo "::error::Secret NPM_TOKEN is not defined for a non-dry run."
             exit 1
           fi
+          # Publish is true if it's NOT a dry run
           echo "publish=${{ !inputs.dryrun }}" | tee -a $GITHUB_OUTPUT
 
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          persist-credentials: true
+          fetch-depth: 0 # Needed for version bump and tagging
+          # Use a token that can push for the version bump commit/tag
+          token: ${{ secrets.PAT || secrets.GITHUB_TOKEN }} # Use PAT if pushing to protected branches requires it
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
   build:
-    name: Build
+    name: Build Packages
     needs: [setup]
-    permissions:
-      contents: write # For build.yml's release uploads
-    uses: ./.github/workflows/build.yml # Use the already modified build workflow
+    permissions: read # Build doesn't need write permissions anymore
+    uses: ./.github/workflows/build.yml
     with:
+      # Use the tag ref created in setup if not dryrun, otherwise use original ref
       ref: ${{ needs.setup.outputs.ref }}
-      tag: ${{ needs.setup.outputs.tag }}
 
   publish:
     name: Publish to npm
+    # Only run if NOT dry run AND build succeeded
     if: ${{ needs.setup.outputs.publish == 'true' && needs.build.result == 'success' }}
     needs: [setup, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: read # To checkout the tag
+      contents: read # To checkout code if needed (not strictly necessary here)
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.setup.outputs.ref }} # Checkout the specific tag
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      - name: Download Release Assets (.tgz)
-        uses: robinraju/release-downloader@v1.10
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
         with:
-          tag: ${{ needs.setup.outputs.tag }}
-          fileName: "*.tgz" # Assuming build.yml uploads tgz files named appropriately
-          out-file-path: ./dist # Download to root dist directory
-          # token: ${{ secrets.GITHUB_TOKEN }} # Default token is usually sufficient
+          name: packages # Name specified in build.yml's upload step
+          path: ./dist # Download to ./dist directory
 
       - name: List Downloaded Files
         run: ls -l ./dist
@@ -95,16 +95,23 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Check if tgz files exist in the root dist directory
+          echo "Setting up npm auth for bun..."
+
+          # Check if tgz files exist
           if ! ls ./dist/*.tgz > /dev/null 2>&1; then
             echo "::error::No .tgz files found in ./dist to publish."
             exit 1
           fi
 
-          # Publish each tgz found in the root dist directory
+          # Publish each tgz found
           for package_path in ./dist/*.tgz; do
             echo "Publishing ${package_path}..."
-            # bun publish <path-to-tgz> works fine from the root directory
-            bun publish "$package_path" --access public # Add --access public if needed
+            # Add --access public if these are public packages on npm
+            bun publish "$package_path" --access public
+            # Add error handling if needed
+            if [[ $? -ne 0 ]]; then
+              echo "::error::Failed to publish ${package_path}"
+              exit 1
+            fi
           done
           echo "All packages published successfully."
