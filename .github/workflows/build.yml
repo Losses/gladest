@@ -139,6 +139,34 @@ jobs:
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
         run: bun run ${{ matrix.cfg.script }}
 
+      - name: Move Binary to Platform Directory
+        shell: bash
+        working-directory: ./markdown-it-gladest # Still operate from the main package dir
+        run: |
+          echo "Moving compiled binary to platform directory..."
+          PLATFORM_DIR="./platforms/${{ matrix.cfg.platform }}"
+          SOURCE_BINARY="./index.node" # Default Neon output location
+          DEST_BINARY="${PLATFORM_DIR}/index.node"
+
+          if [[ ! -f "$SOURCE_BINARY" ]]; then
+            echo "::error::Compiled binary ${SOURCE_BINARY} not found after build step!"
+            ls -l . # List files in current dir for debugging
+            exit 1
+          fi
+
+          # Ensure platform directory exists (it should, if packing works)
+          mkdir -p "$PLATFORM_DIR"
+
+          echo "Moving ${SOURCE_BINARY} to ${DEST_BINARY}"
+          mv "$SOURCE_BINARY" "$DEST_BINARY"
+
+          # Verify move
+          if [[ ! -f "$DEST_BINARY" ]]; then
+            echo "::error::Failed to move binary to ${DEST_BINARY}"
+            exit 1
+          fi
+          echo "Binary moved successfully."
+
       - name: Pack Platform Binary
         id: pack
         working-directory: ./markdown-it-gladest
