@@ -89,7 +89,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "Setting up npm auth implicitly via NODE_AUTH_TOKEN..."
+          # Explicitly configure npm authentication via .npmrc
+          # This is often more reliable in CI than relying solely on NODE_AUTH_TOKEN env var
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          # Replace '@your-scope' with your actual npm scope if applicable
+          echo "@fuuck:registry=https://registry.npmjs.org/" >> ~/.npmrc
+
+          echo "Explicitly configured npm auth via ~/.npmrc"
 
           # Use find to locate all .tgz files recursively within ./dist
           # Check if any tgz files exist before proceeding
@@ -104,7 +110,7 @@ jobs:
             echo "Publishing ${package_path} using 'bunx npm publish'..."
             # Add --access public if these are public packages on npm
             # Using bunx to invoke npm ensures we use the npm version potentially managed by bun
-            # The NODE_AUTH_TOKEN env var handles authentication.
+            # Authentication should now be handled by ~/.npmrc
             if bunx npm publish "$package_path" --access public; then
               echo "Successfully published ${package_path}"
               published_count=$((published_count + 1))
@@ -123,3 +129,5 @@ jobs:
           fi
 
           echo "Successfully published $published_count packages using npm."
+
+          rm -f ~/.npmrc
