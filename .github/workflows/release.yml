@@ -3,16 +3,11 @@ name: Release
 
 run-name: |
   ${{ (inputs.dryrun && 'Dry run')
-   || format('Release: {0}', inputs.version || 'Auto') }} # Adjust naming
+   || 'Release' }}
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version update type (patch, minor, major, specific version like 1.2.3)"
-        required: true
-        type: string
-        default: "patch"
       dryrun:
         description: "Dry run (builds, checks, but no tag/publish/release)"
         required: false
@@ -21,7 +16,7 @@ on:
 
 jobs:
   setup:
-    name: Setup & Version Bump
+    name: Setup
     runs-on: ubuntu-latest
     permissions:
       contents: write # Needed for version bump, commit, tag, push
@@ -30,7 +25,6 @@ jobs:
       publish: ${{ steps.publish.outputs.publish }}
       ref: ${{ steps.tag.outputs.ref || github.ref }} # ref will be the tag name if not dryrun
       tag: ${{ steps.tag.outputs.tag || '' }} # The actual tag name (e.g., v1.0.1)
-      version: ${{ steps.tag.outputs.version || '' }} # Version number (e.g., 1.0.1)
     steps:
       - id: dryrun
         name: Set Dry Run Output
