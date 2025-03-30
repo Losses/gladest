@@ -63,9 +63,9 @@ jobs:
 
   publish:
     name: Publish to npm
-    # Only run if NOT dry run AND build succeeded (build includes collect-and-upload now)
+    # Only run if NOT dry run AND build succeeded
     if: ${{ needs.setup.outputs.publish == 'true' && needs.build.result == 'success' }}
-    needs: [setup, build] # build job now includes collect-and-upload implicitly via its structure
+    needs: [setup, build] # build job includes collect-and-upload implicitly
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -84,12 +84,12 @@ jobs:
           echo "Listing contents of ./dist"
           ls -lR ./dist
 
-      - name: Publish Packages to npm
+      - name: Publish Packages to NPM
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "Setting up npm auth for bun..."
+          echo "Setting up npm auth implicitly via NODE_AUTH_TOKEN..."
 
           # Use find to locate all .tgz files recursively within ./dist
           # Check if any tgz files exist before proceeding
@@ -101,9 +101,11 @@ jobs:
           published_count=0
           # Process each found tgz file
           find ./dist -name '*.tgz' -print0 | while IFS= read -r -d $'\0' package_path; do
-            echo "Publishing ${package_path}..."
+            echo "Publishing ${package_path} using 'bunx npm publish'..."
             # Add --access public if these are public packages on npm
-            if bun publish "$package_path" --access public; then
+            # Using bunx to invoke npm ensures we use the npm version potentially managed by bun
+            # The NODE_AUTH_TOKEN env var handles authentication.
+            if bunx npm publish "$package_path" --access public; then
               echo "Successfully published ${package_path}"
               published_count=$((published_count + 1))
             else
@@ -120,4 +122,4 @@ jobs:
             exit 1
           fi
 
-          echo "Successfully published $published_count packages."
+          echo "Successfully published $published_count packages using npm."
