@@ -115,7 +115,6 @@ jobs:
           # Also add pkg-config path
           echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libffi)/lib/pkgconfig" >> $GITHUB_ENV
 
-
       - name: Install OpenSSL (Windows)
         if: runner.os == 'Windows'
         run: |

@@ -7,6 +7,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "markdown-it-gladest": "workspace:*"
+    "@fuuck/markdown-it-gladest": "workspace:*"
   }
 }
