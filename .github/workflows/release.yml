@@ -63,24 +63,26 @@ jobs:
 
   publish:
     name: Publish to npm
-    # Only run if NOT dry run AND build succeeded
+    # Only run if NOT dry run AND build succeeded (build includes collect-and-upload now)
     if: ${{ needs.setup.outputs.publish == 'true' && needs.build.result == 'success' }}
-    needs: [setup, build]
+    needs: [setup, build] # build job now includes collect-and-upload implicitly via its structure
     runs-on: ubuntu-latest
     permissions:
-      contents: read # To checkout code if needed (not strictly necessary here)
+      contents: read
     steps:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
 
-      - name: Download Build Artifacts
+      - name: Download Final Build Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: packages # Name specified in build.yml's upload step
+          name: packages # Name specified in build.yml's collect-and-upload step
           path: ./dist # Download to ./dist directory
 
       - name: List Downloaded Files
-        run: ls -l ./dist
+        run: |
+          echo "Listing contents of ./dist"
+          ls -lR ./dist
 
       - name: Publish Packages to npm
         shell: bash
@@ -89,21 +91,33 @@ jobs:
         run: |
           echo "Setting up npm auth for bun..."
 
-          # Check if tgz files exist
-          if ! ls ./dist/*.tgz > /dev/null 2>&1; then
-            echo "::error::No .tgz files found in ./dist to publish."
+          # Use find to locate all .tgz files recursively within ./dist
+          # Check if any tgz files exist before proceeding
+          if ! find ./dist -name '*.tgz' -print -quit | grep -q .; then
+             echo "::error::No .tgz files found in ./dist or its subdirectories to publish."
+             exit 1
+          fi
+
+          published_count=0
+          # Process each found tgz file
+          find ./dist -name '*.tgz' -print0 | while IFS= read -r -d $'\0' package_path; do
+            echo "Publishing ${package_path}..."
+            # Add --access public if these are public packages on npm
+            if bun publish "$package_path" --access public; then
+              echo "Successfully published ${package_path}"
+              published_count=$((published_count + 1))
+            else
+              echo "::error::Failed to publish ${package_path}"
+              # Decide if you want to exit on first failure or try publishing others
+              exit 1 # Exit on first failure
+            fi
+          done
+
+          # Final check after the loop
+          if [[ "$published_count" -eq 0 ]]; then
+            # This case might be redundant if the initial check works, but good for safety
+            echo "::error::No packages were successfully published."
             exit 1
           fi
 
-          # Publish each tgz found
-          for package_path in ./dist/*.tgz; do
-            echo "Publishing ${package_path}..."
-            # Add --access public if these are public packages on npm
-            bun publish "$package_path" --access public
-            # Add error handling if needed
-            if [[ $? -ne 0 ]]; then
-              echo "::error::Failed to publish ${package_path}"
-              exit 1
-            fi
-          done
-          echo "All packages published successfully."
+          echo "Successfully published $published_count packages."
