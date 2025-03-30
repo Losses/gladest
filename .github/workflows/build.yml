@@ -165,8 +165,8 @@ jobs:
           FILENAME=$(bun pm pack --outdir ../../dist | grep '\.tgz$') # Adjust output path relative to current dir
           # No need to cd back, filename is captured
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-          echo "Packed file: ../dist/${FILENAME}" # Log the correct path
-          ls -l ../dist # List contents of the root dist directory
+          echo "Packed file: ../../dist/${FILENAME}" # Log the correct path
+          ls -l ../../dist # List contents of the root dist directory
 
       # Release Asset step runs at the root level, needs path relative to root
       - name: Release Asset
