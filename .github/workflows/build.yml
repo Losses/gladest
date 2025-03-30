@@ -274,13 +274,60 @@ jobs:
         working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          # Create dist directory at the REPO ROOT
-          mkdir -p ../dist
-          # Pack and output to the REPO ROOT dist directory
-          FILENAME=$(bun pm pack --destination ../dist | grep '\.tgz$') # Adjust output path relative to working dir
+          echo "*** Debug: Start of Pack Main Package"
+          echo "Initial PWD: $(pwd)"
+
+          # Define REPO ROOT dist directory (absolute path)
+          REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
+          echo "Target REPO DIST directory (absolute): ${REPO_DIST_DIR}"
+
+          # Define output directory relative to *this* PWD for bun
+          # Relative path from markdown-it-gladest to REPO_ROOT/dist is ../dist
+          BUN_OUTDIR="../dist"
+          echo "Packing from $(pwd) with relative outdir: ${BUN_OUTDIR}"
+
+          # Create dist directory at the REPO ROOT if it doesn't exist
+          # Use absolute path for mkdir for robustness
+          mkdir -p "${REPO_DIST_DIR}"
+
+          # Pack and capture the *absolute path* output
+          echo "Executing: bun pm pack --destination ${BUN_OUTDIR}"
+          # Capture potentially multi-line output, get the line ending in .tgz
+          PACK_OUTPUT_ABSPATH=$(bun pm pack --destination "${BUN_OUTDIR}" | grep '\.tgz$' | head -n 1)
+          echo "bun pm pack absolute path output: ${PACK_OUTPUT_ABSPATH}"
+
+          # Error check: Did we get an absolute path?
+          if [[ -z "$PACK_OUTPUT_ABSPATH" ]]; then
+            echo "::error::Failed to capture packed filename path from bun output."
+            echo "Listing target directory (${BUN_OUTDIR}) contents:"
+            ls -l "${BUN_OUTDIR}" || echo "Target directory listing failed (relative path)."
+            echo "Listing target directory (${REPO_DIST_DIR}) contents:"
+            ls -l "${REPO_DIST_DIR}" || echo "Target directory listing failed (absolute path)."
+            exit 1
+          fi
+
+          # Extract just the filename using basename
+          FILENAME=$(basename "$PACK_OUTPUT_ABSPATH")
+          echo "Captured filename: ${FILENAME}"
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-          echo "Packed file: ../dist/${FILENAME}" # Log the correct path
-          ls -l ../dist # List contents of the root dist directory
+
+          # Verification (Optional but recommended)
+          # Verify the file exists at the *correct absolute path*
+          PACKED_FILE_ABS_PATH="${REPO_DIST_DIR}/${FILENAME}"
+          echo "Verifying packed file at absolute path: ${PACKED_FILE_ABS_PATH}"
+
+          if [[ -f "${PACKED_FILE_ABS_PATH}" ]]; then
+             echo "Packed file ${FILENAME} successfully found in target directory (${REPO_DIST_DIR})."
+             echo "Listing contents of target directory (${REPO_DIST_DIR}):"
+             ls -l "${REPO_DIST_DIR}"
+          else
+             echo "::warning::Packed file ${FILENAME} NOT found at ${PACKED_FILE_ABS_PATH}."
+             echo "Listing target directory contents (${REPO_DIST_DIR}):"
+             ls -l "${REPO_DIST_DIR}" || echo "Target directory listing failed."
+             exit 1 # Fail the step if verification fails
+          fi
+
+          echo "*** Debug: End of Pack Main Package"
 
       # Release Asset step runs at the root level, needs path relative to root
       - name: Release Main Package Asset
