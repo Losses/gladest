@@ -153,20 +153,96 @@ jobs:
 
       - name: Pack Platform Binary
         id: pack
-        # This step involves changing directories *within* the package directory
         working-directory: ./markdown-it-gladest
         shell: bash
         run: |
-          # Create dist directory at the REPO ROOT for consistency
-          mkdir -p ../dist
-          # Change to the platform-specific directory *within* markdown-it-gladest
-          cd ./platforms/${{ matrix.cfg.platform }}
+          echo "*** Debug: Start of Pack Platform Binary"
+          echo "Initial PWD: $(pwd)"
+          ls -la # Show contents of markdown-it-gladest
+
+          # Define REPO ROOT dist directory (absolute path for clarity in logs)
+          REPO_DIST_DIR="${GITHUB_WORKSPACE}/dist"
+          echo "Target REPO DIST directory (absolute): ${REPO_DIST_DIR}"
+
+          # Create dist directory at the REPO ROOT
+          echo "Creating directory: ${REPO_DIST_DIR}"
+          mkdir -p "${REPO_DIST_DIR}"
+          echo "Listing REPO_ROOT (${GITHUB_WORKSPACE}) contents after mkdir:"
+          ls -la "${GITHUB_WORKSPACE}"
+
+          # Platform specific directory within the package
+          PLATFORM_SUBDIR="./platforms/${{ matrix.cfg.platform }}"
+          echo "Checking platform subdirectory: ${PLATFORM_SUBDIR}"
+          ls -la "${PLATFORM_SUBDIR}" || echo "WARNING: Platform subdirectory ${PLATFORM_SUBDIR} not found or empty before packing."
+
+          # Define the output directory relative to the *current* PWD (markdown-it-gladest) for the pack command if needed
+          # However, bun pm pack in later versions might support absolute paths better. Let's try absolute first.
+          # BUN_OUTDIR="${REPO_DIST_DIR}" # Try absolute path
+
+          # *** If bun pm pack requires relative path from CWD:
+          # Change directory *temporarily* for packing if needed, OR calculate relative path
+          # Relative path from here (markdown-it-gladest) to REPO_DIST_DIR is "../dist"
+          BUN_OUTDIR="../dist"
+          echo "Using relative outdir for bun: ${BUN_OUTDIR}"
+          # *** End Relative Path Calculation
+
+          # Navigate to the directory containing the package.json specific to the platform binary
+          # Assuming the platform directory itself is the package to be packed
+          echo "Changing directory to platform subdirectory: ${PLATFORM_SUBDIR}"
+          cd "${PLATFORM_SUBDIR}"
+          echo "Current PWD after cd: $(pwd)"
+          ls -la # Show contents of platform dir before packing
+
+          # Define relative path from *this new PWD* to the REPO_DIST_DIR
+          # From markdown-it-gladest/platforms/<platform> to REPO_ROOT/dist is ../../../dist
+          BUN_OUTDIR_FROM_PLATFORM_DIR="../../../dist"
+          echo "Packing from $(pwd) with relative outdir: ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
+
           # Pack and output to the REPO ROOT dist directory
-          FILENAME=$(bun pm pack --outdir ../../dist | grep '\.tgz$') # Adjust output path relative to current dir
-          # No need to cd back, filename is captured
+          echo "Executing: bun pm pack --outdir ${BUN_OUTDIR_FROM_PLATFORM_DIR}"
+          PACK_OUTPUT=$(bun pm pack --outdir "${BUN_OUTDIR_FROM_PLATFORM_DIR}")
+          echo "bun pm pack output: ${PACK_OUTPUT}"
+
+          # Extract filename reliably
+          # Assuming output is like: "- my-package-platform-v1.0.0.tgz" or just the filename
+          FILENAME=$(echo "${PACK_OUTPUT}" | grep '\.tgz$')
+
+          if [[ -z "$FILENAME" ]]; then
+            echo "::error::Failed to capture packed filename from bun output."
+            # List the target dir anyway to see if *anything* appeared
+            echo "Listing target directory (${BUN_OUTDIR_FROM_PLATFORM_DIR}) contents:"
+            ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}" || echo "Target directory listing failed."
+            exit 1
+          fi
+          echo "Captured filename: ${FILENAME}"
           echo "filename=${FILENAME}" | tee -a $GITHUB_OUTPUT
-          echo "Packed file: ../../dist/${FILENAME}" # Log the correct path
-          ls -l ../../dist # List contents of the root dist directory
+
+          # Verify the packed file exists in the *intended* repo root dist directory
+          PACKED_FILE_PATH="${BUN_OUTDIR_FROM_PLATFORM_DIR}/${FILENAME}" # Relative path from current PWD
+          PACKED_FILE_ABS_PATH="${REPO_DIST_DIR}/${FILENAME}" # Absolute path
+
+          echo "Verifying packed file at relative path from $(pwd): ${PACKED_FILE_PATH}"
+          echo "Verifying packed file at absolute path: ${PACKED_FILE_ABS_PATH}"
+
+          echo "Listing contents of target directory (${BUN_OUTDIR_FROM_PLATFORM_DIR}):"
+          ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}"
+
+          # Check if the specific file exists using the relative path from current PWD
+          if [[ -f "${PACKED_FILE_PATH}" ]]; then
+             echo "Packed file ${FILENAME} successfully found in target directory."
+          else
+             echo "::warning::Packed file ${FILENAME} NOT found at ${PACKED_FILE_PATH}."
+             echo "Listing target directory again (${BUN_OUTDIR_FROM_PLATFORM_DIR}):"
+             ls -l "${BUN_OUTDIR_FROM_PLATFORM_DIR}" || echo "Target directory listing failed."
+             echo "Checking absolute path: ${PACKED_FILE_ABS_PATH}"
+             ls -l "${PACKED_FILE_ABS_PATH}" || echo "Absolute path listing failed."
+             # Go back one level to check if bun packed to parent dir mistakenly
+             echo "Listing parent directory (../../..) contents:"
+             ls -l ../../../ || echo "Parent dir listing failed."
+
+          fi
+
+          echo "*** Debug: End of Pack Platform Binary"
 
       # Release Asset step runs at the root level, needs path relative to root
       - name: Release Asset
