@@ -1,5 +1,5 @@
 {
-  "name": "markdown-it-gladest",
+  "name": "@fuuck/markdown-it-gladest",
   "version": "0.1.0",
   "description": "",
   "main": "./lib/index.cjs",
