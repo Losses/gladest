@@ -1,7 +1,7 @@
 {
   "name": "@fuuck/markdown-it-gladest-linux-x64-gnu",
   "description": "Prebuilt binary package for `markdown-it-gladest` on `linux-x64-gnu`.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "os": [
     "linux"
   ],

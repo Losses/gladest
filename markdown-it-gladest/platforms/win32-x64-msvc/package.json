@@ -1,7 +1,7 @@
 {
   "name": "@fuuck/markdown-it-gladest-win32-x64-msvc",
   "description": "Prebuilt binary package for `markdown-it-gladest` on `win32-x64-msvc`.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "os": [
     "win32"
   ],
