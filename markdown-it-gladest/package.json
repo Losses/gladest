@@ -1,6 +1,6 @@
 {
   "name": "@fuuck/markdown-it-gladest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "",
   "main": "./lib/index.cjs",
   "scripts": {
@@ -59,10 +59,10 @@
     "markdown-it": "^14.1.0"
   },
   "optionalDependencies": {
-    "@fuuck/markdown-it-gladest-win32-x64-msvc": "0.1.0",
-    "@fuuck/markdown-it-gladest-darwin-x64": "0.1.0",
-    "@fuuck/markdown-it-gladest-darwin-arm64": "0.1.0",
-    "@fuuck/markdown-it-gladest-linux-x64-gnu": "0.1.0",
-    "@fuuck/markdown-it-gladest-linux-arm64-gnu": "0.1.0"
+    "@fuuck/markdown-it-gladest-win32-x64-msvc": "0.1.1",
+    "@fuuck/markdown-it-gladest-darwin-x64": "0.1.1",
+    "@fuuck/markdown-it-gladest-darwin-arm64": "0.1.1",
+    "@fuuck/markdown-it-gladest-linux-x64-gnu": "0.1.1",
+    "@fuuck/markdown-it-gladest-linux-arm64-gnu": "0.1.1"
   }
 }
