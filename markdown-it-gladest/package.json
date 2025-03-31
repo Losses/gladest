@@ -12,7 +12,7 @@
     "debug": "bun run cargo-build",
     "build": "tsc && cargo build -p markdown-it-gladest --message-format=json-render-diagnostics --release > cargo.log",
     "cross": "tsc && cross build -p markdown-it-gladest --message-format=json-render-diagnostics --release > cross.log",
-    "prepack": "tsc && bunx neon update",
+    "prepack": "bun run tsc && bunx neon update",
     "version": "bunx neon bump --binaries platforms && git add .",
     "release": "gh workflow run release.yml -f dryrun=false -f version=patch",
     "dryrun": "gh workflow run publish.yml -f dryrun=true"
@@ -33,7 +33,12 @@
   },
   "types": "./lib/index.d.cts",
   "files": [
-    "lib/**/*.?({c,m}){t,j}s"
+    "lib/index.cjs",
+    "lib/index.d.cts",
+    "lib/index.d.mts",
+    "lib/index.mjs",
+    "lib/load.cjs",
+    "lib/load.d.cts"
   ],
   "neon": {
     "type": "library",
@@ -52,5 +57,12 @@
     "@neon-rs/load": "^0.1.82",
     "@types/markdown-it": "^14.1.2",
     "markdown-it": "^14.1.0"
+  },
+  "optionalDependencies": {
+    "@fuuck/markdown-it-gladest-win32-x64-msvc": "0.1.0",
+    "@fuuck/markdown-it-gladest-darwin-x64": "0.1.0",
+    "@fuuck/markdown-it-gladest-darwin-arm64": "0.1.0",
+    "@fuuck/markdown-it-gladest-linux-x64-gnu": "0.1.0",
+    "@fuuck/markdown-it-gladest-linux-arm64-gnu": "0.1.0"
   }
 }
