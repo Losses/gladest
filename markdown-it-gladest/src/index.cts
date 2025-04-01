@@ -241,7 +241,7 @@ function gladstPlugin(md: MarkdownIt, options?: GladstPluginOptions): void {
   const internalOptions: InternalRustOptions = {
     format: options?.format === "png" ? "png" : "svg", // Default to svg
     ppi:
-      typeof options?.ppi === "number" && options.ppi > 0 ? options.ppi : null,
+      typeof options?.ppi === "number" && options.ppi > 0 ? options.ppi : 300,
   };
 
   // Common rendering logic (extracted)
