@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 
 import MarkdownIt from "markdown-it";
 
-import markdownItGladest from "markdown-it-gladest";
+import markdownItGladest from "@fuuck/markdown-it-gladest";
 
 const md = new MarkdownIt({
   html: true,
