@@ -21,20 +21,24 @@ OPENSSL_DIR = "/usr"
 # Adjust PKG_CONFIG_PATH for the arm64 architecture
 PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"
 
+# Compiler flags for PIC compilation
+# Forcing -fPIC directly into the compiler command string
+CC_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-gcc -fPIC"
+CXX_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-g++ -fPIC"
+AR_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-ar"
+# These CFLAGS/CXXFLAGS might now be redundant for -fPIC but harmless to keep
+CFLAGS_aarch64_unknown_linux_gnu = "-fPIC"
+CXXFLAGS_aarch64_unknown_linux_gnu = "-fPIC"
+
 # Force libz-sys to use the system zlib instead of building from source
 LIBZ_SYS_STATIC = "0"
 PKG_CONFIG_ALLOW_CROSS = "1"
 
-# Compiler flags for PIC compilation
-CC_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-gcc"
-CXX_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-g++"
-AR_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-ar"
-CFLAGS_aarch64_unknown_linux_gnu = "-fPIC"
-CXXFLAGS_aarch64_unknown_linux_gnu = "-fPIC"
-
 # Rust compiler flags
 RUSTFLAGS = "-C relocation-model=pic -C link-arg=-Wl,-z,relro,-z,now"
 
-# Additional environment variables to ensure PIC compilation
+# Additional environment variables to ensure PIC compilation (global)
+# These apply to host builds or as fallbacks.
+# Target-specific flags usually take precedence for cross-compilation.
 CFLAGS = "-fPIC"
 CXXFLAGS = "-fPIC"
