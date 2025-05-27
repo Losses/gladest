@@ -143,7 +143,7 @@ pub struct FormulaRenderResult {
 fn format_typst_error(error: &TypstAsLibError, formula: &str) -> String {
     match error {
         TypstAsLibError::TypstSource(diagnostics) => {
-            let mut error_msg = "Failed to compile formula\n".to_string();
+            let mut error_msg = "Failed to compile the formula\n".to_string();
 
             if diagnostics.is_empty() {
                 error_msg.push_str("Compilation failed with unspecified diagnostics.\n");
