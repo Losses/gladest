@@ -98,8 +98,7 @@ gladst "*.html" --body-font-name "Source Serif Pro" --math-font-name "Latin Mode
 Gladest supports three types of font sources:
 
 1. **System Fonts**: Use fonts installed on your system by specifying their names
-2. **Font Files**: Load fonts from specific file paths (supports TTF, OTF, WOFF, WOFF2)
-3. **Default Fonts**: Automatic fallback to system serif fonts and mathematical fonts
+2. **Font Files**: Load fonts from specific file paths
 
 ### Font Types
 
@@ -110,8 +109,6 @@ Gladest supports three types of font sources:
 
 - Font files are validated for existence before processing begins
 - Cannot specify both file and system font name for the same font type
-- Clear error messages guide users to correct font configuration issues
-- Current font configuration is displayed at the start of processing
 
 ### Recommended Font Combinations
 
