@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.97"
 derive_typst_intoval = "0.3.0"
 typst = "0.13.1"
-typst-as-lib = { version = "0.14.1", features = ["packages", "reqwest"] }
+typst-as-lib = { version = "0.14.3", features = ["packages", "reqwest"] }
 typst-render = "0.13.1"
 typst-svg = "0.13.1"
 base64 = "0.22.1"

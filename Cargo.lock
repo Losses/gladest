@@ -3491,9 +3491,9 @@ dependencies = [
 
 [[package]]
 name = "typst-as-lib"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39f01f1dd3d5b066b2441df232e3bf450c76f97ec3ee44136b2906aa0fcab7b9"
+checksum = "0abd0cdceabf0cfd83353bd51131d8d248fffae157a9e0108c0495ed9768c9f3"
 dependencies = [
  "binstall-tar",
  "bytes",
