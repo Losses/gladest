@@ -14,7 +14,7 @@ use typst::{
     foundations::{Dict, IntoValue},
     layout::PagedDocument,
 };
-use typst_as_lib::{TypstEngine, TypstTemplateMainFile};
+use typst_as_lib::{TypstAsLibError, TypstEngine, TypstTemplateMainFile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderFormat {
@@ -131,6 +131,100 @@ pub struct FormulaRenderResult {
     pub y_em: f64,
 }
 
+/// Helper function to format Typst compilation errors with detailed information
+fn format_typst_error(error: &TypstAsLibError, formula: &str) -> String {
+    match error {
+        TypstAsLibError::TypstSource(diagnostics) => {
+            let mut error_msg = format!("Failed to compile formula: '{}'\n", formula);
+
+            if diagnostics.is_empty() {
+                error_msg.push_str("Compilation failed with unspecified diagnostics.\n");
+                return error_msg;
+            }
+
+            for (i, diagnostic) in diagnostics.iter().enumerate() {
+                error_msg.push_str(&format!("\nError #{}: ", i + 1));
+
+                // Add the main error message
+                error_msg.push_str(&diagnostic.message);
+                error_msg.push('\n');
+
+                // Add severity information
+                error_msg.push_str(&format!("  Severity: {:?}\n", diagnostic.severity));
+
+                // Add span information
+                let span = diagnostic.span;
+                if let Some(file_id) = span.id() {
+                    let path_repr = file_id.vpath().as_rootless_path().display().to_string();
+                    error_msg.push_str(&format!("  Location: {}\n", path_repr));
+                    // Optionally, include byte range if useful, though it's less user-friendly
+                    // let range = span.range();
+                    // error_msg.push_str(&format!("    Byte Range: {}-{}\n", range.start, range.end));
+                } else {
+                    error_msg.push_str("  Location: No specific source file associated (detached span or nil FileId).\n");
+                }
+
+                // Add trace information if available
+                if !diagnostic.trace.is_empty() {
+                    error_msg.push_str("  Trace:\n");
+                    for point in &diagnostic.trace {
+                        // point is Spanned<Tracepoint>
+                        // point.v is the Tracepoint enum
+                        // point.span is the Span of this tracepoint
+                        let trace_span_info = if let Some(trace_file_id) = point.span.id() {
+                            format!("at {}", trace_file_id.vpath().as_rootless_path().display())
+                        } else {
+                            "at detached span or nil FileId".to_string()
+                        };
+                        error_msg.push_str(&format!("    - {}: {}\n", point.v, trace_span_info));
+                    }
+                }
+
+                // Add hints if available
+                if !diagnostic.hints.is_empty() {
+                    error_msg.push_str("  Hints:\n");
+                    for hint in &diagnostic.hints {
+                        error_msg.push_str(&format!("    - {}\n", hint));
+                    }
+                }
+            }
+            error_msg
+        }
+        TypstAsLibError::TypstFile(file_err) => {
+            format!(
+                "File Error while processing formula '{}': {}\n",
+                formula, file_err
+            )
+        }
+        TypstAsLibError::MainSourceFileDoesNotExist(file_id) => {
+            // Here file_id is FileId, not Option<FileId>, so direct usage is correct.
+            format!(
+                "Main source file not found for formula '{}': {:?}.\n  Path (vpath): {}\n",
+                formula,
+                file_id,
+                file_id.vpath().as_rootless_path().display()
+            )
+        }
+        TypstAsLibError::HintedString(hinted_str) => {
+            let mut msg = format!(
+                "Error processing formula '{}': {}\n",
+                formula,
+                hinted_str.message()
+            );
+            if !hinted_str.hints().is_empty() {
+                msg.push_str("  Hints:\n");
+                for hint in hinted_str.hints() {
+                    msg.push_str(&format!("    - {}\n", hint));
+                }
+            }
+            msg
+        }
+        TypstAsLibError::Unspecified(err_msg) => {
+            format!("Unspecified error for formula '{}': {}\n", formula, err_msg)
+        }
+    }
+}
+
 impl RenderEngine {
     /// Create a new render engine with default font configuration
     pub fn new() -> Self {
@@ -139,8 +233,12 @@ impl RenderEngine {
 
     /// Create a new render engine with custom font configuration
     pub fn with_font_config(font_config: FontConfig) -> Self {
+        let source = Self::generate_template(&font_config);
+        println!("AAAAAA");
+        println!("{}", source);
+        println!("VVVVVV");
         let mut engine_builder = TypstEngine::builder()
-            .main_file(Self::generate_template(&font_config))
+            .main_file(source)
             .with_package_file_resolver();
 
         // Collect font data for the engine
@@ -183,33 +281,31 @@ impl RenderEngine {
         let math_font = Self::font_source_to_typst_name(&font_config.math_font);
 
         format!(
-            r#"
-#import sys: inputs
+            r#"#import sys: inputs
 #import "@preview/mitex:0.2.5": *
 
-#set text(font: "{}", size: 10pt)
+{}
 #set page(fill: none, width: auto, height: auto, margin: (left: 0pt, right: 0pt, top: 0.455em, bottom: 0.455em))
-#show math.equation: set text(font: "{}")
+{}
 
 #let content = inputs.formula
 #let inline = inputs.inline
-#let body_font = inputs.body_font
-#let math_font = inputs.math_font
-
-// Override fonts if provided in inputs
-#if body_font != "" [
-  #set text(font: body_font)
-]
-#if math_font != "" [
-  #show math.equation: set text(font: math_font)
-]
 
 #if inline [
   #mi(content)
 ] else [
   #mitex(content)
 ]"#,
-            body_font, math_font
+            if !body_font.is_empty() {
+                format!("#set text(font: \"{body_font}\", size: 10pt)")
+            } else {
+                "#set text(size: 10pt)".to_string()
+            },
+            if !math_font.is_empty() {
+                format!("#show math.equation: set text(font: \"{math_font}\")")
+            } else {
+                "".to_string()
+            },
         )
     }
 
@@ -256,11 +352,15 @@ impl RenderEngine {
 
         let ppi = ppi.unwrap_or(1200.0);
 
-        let doc: PagedDocument = self
-            .engine
-            .compile_with_input(content)
-            .output
-            .with_context(|| "Failed to compile formula")?;
+        let result = self.engine.compile_with_input(content);
+
+        let doc: PagedDocument = match result.output {
+            Ok(doc) => doc,
+            Err(error) => {
+                let error_details = format_typst_error(&error, formula);
+                return Err(anyhow::anyhow!("{}", error_details));
+            }
+        };
 
         let page = &doc.pages[0];
         let size = page.frame.size();
@@ -324,11 +424,15 @@ impl RenderEngine {
 
         let ppi = ppi.unwrap_or(1200.0);
 
-        let doc: PagedDocument = self
-            .engine
-            .compile_with_input(content)
-            .output
-            .with_context(|| "Failed to compile formula")?;
+        let result = self.engine.compile_with_input(content);
+
+        let doc: PagedDocument = match result.output {
+            Ok(doc) => doc,
+            Err(error) => {
+                let error_details = format_typst_error(&error, formula);
+                return Err(anyhow::anyhow!("{}", error_details));
+            }
+        };
 
         let page = &doc.pages[0];
         let size = page.frame.size();
