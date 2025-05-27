@@ -1,3 +1,9 @@
+use allsorts::{
+    binary::read::ReadScope,
+    font_data::FontData,
+    tables::{FontTableProvider, NameTable},
+    tag,
+};
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose};
 use derive_typst_intoval::{IntoDict, IntoValue};
@@ -6,13 +12,53 @@ use typst::{
     foundations::{Dict, IntoValue},
     layout::PagedDocument,
 };
-use typst_as_lib::TypstEngine;
-use typst_as_lib::TypstTemplateMainFile;
+use typst_as_lib::{TypstEngine, TypstTemplateMainFile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderFormat {
     Png,
     Svg,
+}
+
+#[derive(Debug)]
+pub struct FontNames {
+    pub family_name: Option<String>,
+    pub subfamily_name: Option<String>,
+    pub full_name: Option<String>,
+    pub postscript_name: Option<String>,
+    pub typographic_family_name: Option<String>,
+    pub typographic_subfamily_name: Option<String>,
+}
+
+pub fn read_font_names(font_data: &[u8], font_index: usize) -> Result<FontNames> {
+    // Parse the font file (supports OpenType, WOFF, WOFF2, CFF)
+    let scope = ReadScope::new(font_data);
+    let font = scope.read::<FontData<'_>>()?;
+
+    // Get table provider for the specified font index (useful for font collections)
+    let provider = font.table_provider(font_index)?;
+
+    // Read the NAME table
+    let name_data = provider.read_table_data(tag::NAME)?;
+    let name = ReadScope::new(&name_data).read::<NameTable<'_>>()?;
+
+    // Extract various name types with fallback logic
+    let family_name = name
+        .string_for_id(NameTable::TYPOGRAPHIC_FAMILY_NAME)
+        .or_else(|| name.string_for_id(NameTable::FONT_FAMILY_NAME));
+
+    let subfamily_name = name
+        .string_for_id(NameTable::TYPOGRAPHIC_SUBFAMILY_NAME)
+        .or_else(|| name.string_for_id(NameTable::FONT_SUBFAMILY_NAME));
+
+    Ok(FontNames {
+        family_name,
+        subfamily_name,
+        full_name: name.string_for_id(NameTable::FULL_FONT_NAME),
+        postscript_name: name.string_for_id(NameTable::POSTSCRIPT_NAME),
+        typographic_family_name: name.string_for_id(NameTable::TYPOGRAPHIC_FAMILY_NAME),
+        typographic_subfamily_name: name.string_for_id(NameTable::TYPOGRAPHIC_SUBFAMILY_NAME),
+    })
 }
 
 // Embed resources directly in the library
