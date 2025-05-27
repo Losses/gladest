@@ -7,6 +7,11 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@fuuck/markdown-it-gladest": "workspace:*"
+    "@fuuck/markdown-it-gladest": "workspace:*",
+    "@fuuck/markdown-it-gladest-win32-x64-msvc": "workspace:*",
+    "@fuuck/markdown-it-gladest-darwin-x64": "workspace:*",
+    "@fuuck/markdown-it-gladest-darwin-arm64": "workspace:*",
+    "@fuuck/markdown-it-gladest-linux-x64-gnu": "workspace:*",
+    "@fuuck/markdown-it-gladest-linux-arm64-gnu": "workspace:*"
   }
 }

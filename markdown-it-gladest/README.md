@@ -12,6 +12,7 @@ A [Markdown-it](https://github.com/markdown-it/markdown-it) plugin to render LaT
 - Uses a native Rust addon for fast rendering.
 - Outputs math as embedded SVG (default) or PNG images.
 - Configurable PPI (Pixels Per Inch) for PNG output.
+- Customizable fonts for body text and mathematical formulas.
 - Easy integration with Markdown-it.
 - Includes basic error handling display for rendering issues.
 
@@ -28,6 +29,8 @@ bun add markdown-it @fuuck/markdown-it-gladest
 **Note:** This package relies on a native Node.js addon built with Rust. Pre-compiled binaries for common platforms (Windows, macOS, Linux) are typically provided. If a pre-compiled binary is not available for your specific platform/architecture, you might need a Rust toolchain installed to build the addon during installation.
 
 ## Usage
+
+### Basic Usage
 
 ```javascript
 import { writeFileSync } from "node:fs";
@@ -75,18 +78,117 @@ An important transformation is standardization: <span class="gladst-inline"><img
 */
 ```
 
+### Font Configuration
+
+You can customize fonts used for rendering mathematical formulas by specifying system fonts or font files:
+
+#### Using System Fonts
+
+```javascript
+import MarkdownIt from "markdown-it";
+import markdownItGladest from "@fuuck/markdown-it-gladest";
+
+const md = new MarkdownIt().use(markdownItGladest, {
+  format: "svg",
+  fonts: {
+    // Configure body font (used for text elements)
+    bodyFont: {
+      system: "Times New Roman",
+    },
+    // Configure math font (used for mathematical symbols)
+    mathFont: {
+      system: "Latin Modern Math",
+    },
+  },
+});
+```
+
+#### Using Font Files
+
+```javascript
+import MarkdownIt from "markdown-it";
+import markdownItGladest from "@fuuck/markdown-it-gladest";
+
+const md = new MarkdownIt().use(markdownItGladest, {
+  format: "svg",
+  fonts: {
+    // Use custom font files
+    bodyFont: {
+      file: "/path/to/your/custom-font.ttf",
+    },
+    mathFont: {
+      file: "/path/to/your/math-font.otf",
+    },
+  },
+});
+```
+
+#### Mixed Font Configuration
+
+```javascript
+import MarkdownIt from "markdown-it";
+import markdownItGladest from "@fuuck/markdown-it-gladest";
+
+const md = new MarkdownIt().use(markdownItGladest, {
+  format: "png",
+  ppi: 300,
+  fonts: {
+    // Use system font for body text
+    bodyFont: {
+      system: "Georgia",
+    },
+    // Use custom font file for math
+    mathFont: {
+      file: "/usr/share/fonts/opentype/lmodern/lmmath-regular.otf",
+    },
+  },
+});
+
+const content = `
+Using custom fonts for better typography:
+
+$$
+\\sum_{i=1}^{n} \\frac{1}{i^2} = \\frac{\\pi^2}{6}
+$$
+
+The Euler's identity: $e^{i\\pi} + 1 = 0$.
+`;
+
+console.log(md.render(content));
+```
+
 ## Options
 
 You can pass an options object when enabling the plugin with `.use()`:
 
 - **`format`**:
+
   - Type: `'svg' | 'png'`
   - Default: `'svg'`
   - Description: Specifies the output image format for the rendered math formulas. SVG is generally recommended for scalability and quality, while PNG might be needed for specific compatibility reasons.
+
 - **`ppi`**:
+
   - Type: `number | null`
   - Default: `null` (uses the default PPI configured in the underlying Typst rendering engine)
   - Description: Sets the Pixels Per Inch for PNG rendering. Higher values result in larger, more detailed images. This option is ignored if `format` is `'svg'`. Invalid values (e.g., non-positive numbers) will also cause it to fall back to the default.
+
+- **`fonts`**:
+
+  - Type: `FontConfig | undefined`
+  - Default: `undefined` (uses default Typst fonts)
+  - Description: Font configuration object that allows customizing the fonts used for rendering.
+
+  **FontConfig Properties:**
+
+  - **`bodyFont`**: Font configuration for body text elements
+    - **`system`**: Use a system font by name (string)
+    - **`file`**: Use a font file by path (string)
+  - **`mathFont`**: Font configuration for mathematical symbols
+    - **`system`**: Use a system font by name (string)
+    - **`file`**: Use a font file by path (string)
+
+  **Important:** You cannot specify both `system` and `file` for the same font type. Choose one approach per font.
 
 ## Syntax
 

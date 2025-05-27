@@ -2,7 +2,8 @@
   "name": "gladest",
   "workspaces": [
     "markdown-it-gladest",
-    "markdown-compile-demo"
+    "markdown-compile-demo",
+    "markdown-it-gladest/platforms/*"
   ],
   "dependencies": {
     "@neon-rs/cli": "^0.1.82"

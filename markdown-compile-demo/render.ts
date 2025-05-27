@@ -12,6 +12,14 @@ const md = new MarkdownIt({
 }).use(markdownItGladest, {
   format: "svg",
   ppi: 600,
+  fonts: {
+    bodyFont: {
+      system: "Noto Serif SC",
+    },
+    mathFont: {
+      system: "Lete Sans Math",
+    },
+  }
 });
 
 const document = `
