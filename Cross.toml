@@ -14,14 +14,27 @@ PKG_CONFIG_PATH = "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr
 pre-build = [
     "dpkg --add-architecture arm64",
     "apt-get update",
-    "apt-get install --assume-yes --no-install-recommends libssl-dev:arm64 pkg-config zlib1g-dev:arm64",
+    "apt-get install --assume-yes --no-install-recommends libssl-dev:arm64 pkg-config zlib1g-dev:arm64 gcc-aarch64-linux-gnu",
 ]
 # Environment variables for the build process inside the container
 OPENSSL_DIR = "/usr"
 # Adjust PKG_CONFIG_PATH for the arm64 architecture
 PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"
+
+# Force libz-sys to use the system zlib instead of building from source
 LIBZ_SYS_STATIC = "0"
 PKG_CONFIG_ALLOW_CROSS = "1"
+
+# Compiler flags for PIC compilation
+CC_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-gcc"
+CXX_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-g++"
+AR_aarch64_unknown_linux_gnu = "aarch64-linux-gnu-ar"
+CFLAGS_aarch64_unknown_linux_gnu = "-fPIC"
+CXXFLAGS_aarch64_unknown_linux_gnu = "-fPIC"
+
+# Rust compiler flags
+RUSTFLAGS = "-C relocation-model=pic -C link-arg=-Wl,-z,relro,-z,now"
+
+# Additional environment variables to ensure PIC compilation
 CFLAGS = "-fPIC"
 CXXFLAGS = "-fPIC"
-RUSTFLAGS = "-C relocation-model=pic"
