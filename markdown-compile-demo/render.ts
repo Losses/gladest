@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 
 import MarkdownIt from "markdown-it";
@@ -17,9 +18,9 @@ const md = new MarkdownIt({
       system: "Noto Serif SC",
     },
     mathFont: {
-      system: "Lete Sans Math",
+      file: join(import.meta.dir, "LeteSansMath.otf"),
     },
-  }
+  },
 });
 
 const document = `
