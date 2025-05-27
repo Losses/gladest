@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -36,7 +36,7 @@ struct Args {
 
     /// Body font file path
     #[arg(long, help = "Path to body font file (e.g., serif.ttf)")]
-    body_font_file: Option<PathBuf>,
+    body_font_file: Option<String>,
 
     /// Body font name (system font)
     #[arg(long, help = "System body font name (e.g., 'Times New Roman')")]
@@ -44,7 +44,7 @@ struct Args {
 
     /// Math font file path
     #[arg(long, help = "Path to math font file (e.g., math.otf)")]
-    math_font_file: Option<PathBuf>,
+    math_font_file: Option<String>,
 
     /// Math font name (system font)
     #[arg(long, help = "System math font name (e.g., 'STIX Two Math')")]
@@ -57,14 +57,34 @@ enum Format {
     Svg,
 }
 
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Ok(home) = env::var("HOME") {
+            path.replacen("~", &home, 1)
+        } else {
+            path.to_string()
+        }
+    } else if path == "~" {
+        env::var("HOME").unwrap_or_else(|_| path.to_string())
+    } else {
+        path.to_string()
+    }
+}
+
 /// Create font configuration from command line arguments
 fn create_font_config(args: &Args) -> Result<FontConfig> {
     let body_font = match (&args.body_font_file, &args.body_font_name) {
         (Some(file), None) => {
-            if !file.exists() {
-                return Err(anyhow::anyhow!("Body font file does not exist: {:?}", file));
+            let expanded_path = expand_tilde(file);
+            let expanded_file = PathBuf::from(&expanded_path);
+
+            if !expanded_file.exists() {
+                return Err(anyhow::anyhow!(
+                    "Body font file does not exist: {:?}",
+                    expanded_path
+                ));
             }
-            FontSource::File(file.to_string_lossy().to_string())
+            FontSource::File(expanded_path)
         }
         (None, Some(name)) => FontSource::System(name.clone()),
         (Some(_), Some(_)) => {
@@ -77,10 +97,16 @@ fn create_font_config(args: &Args) -> Result<FontConfig> {
 
     let math_font = match (&args.math_font_file, &args.math_font_name) {
         (Some(file), None) => {
-            if !file.exists() {
-                return Err(anyhow::anyhow!("Math font file does not exist: {:?}", file));
+            let expanded_path = expand_tilde(file);
+            let expanded_file = PathBuf::from(&expanded_path);
+
+            if !expanded_file.exists() {
+                return Err(anyhow::anyhow!(
+                    "Math font file does not exist: {:?}",
+                    expanded_path
+                ));
             }
-            FontSource::File(file.to_string_lossy().to_string())
+            FontSource::File(expanded_path)
         }
         (None, Some(name)) => FontSource::System(name.clone()),
         (Some(_), Some(_)) => {
@@ -267,7 +293,7 @@ fn main() -> Result<()> {
     // Create font configuration
     let font_config = create_font_config(&args).context("Failed to create font configuration")?;
 
-    let paths: Vec<PathBuf> = glob(&args.input)
+    let paths: Vec<PathBuf> = glob(&expand_tilde(&args.input))
         .with_context(|| format!("Failed to read glob pattern: {}", args.input))?
         .filter_map(Result::ok)
         .collect();
