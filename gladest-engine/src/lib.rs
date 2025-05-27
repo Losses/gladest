@@ -54,8 +54,6 @@ pub struct FontConfig {
     pub math_font: FontSource,
     /// Whether to include system fonts in the search
     pub include_system_fonts: bool,
-    /// Whether to include embedded fonts
-    pub include_embedded_fonts: bool,
 }
 
 impl Default for FontConfig {
@@ -64,7 +62,6 @@ impl Default for FontConfig {
             body_font: FontSource::System("serif".to_string()),
             math_font: FontSource::System("Fira Math".to_string()),
             include_system_fonts: true,
-            include_embedded_fonts: true,
         }
     }
 }
@@ -247,7 +244,7 @@ impl RenderEngine {
         // Configure font search options
         let font_options = TypstKitFontOptions::default()
             .include_system_fonts(font_config.include_system_fonts)
-            .include_embedded_fonts(font_config.include_embedded_fonts);
+            .include_embedded_fonts(false);
 
         // Apply font search configuration
         engine_builder = engine_builder.search_fonts_with(font_options);

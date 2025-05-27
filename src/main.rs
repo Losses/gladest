@@ -131,7 +131,6 @@ fn create_font_config(args: &Args) -> Result<FontConfig> {
         body_font,
         math_font,
         include_system_fonts: args.body_font_name.is_some() || args.math_font_name.is_some(),
-        include_embedded_fonts: args.body_font_file.is_some() || args.math_font_file.is_some(),
     })
 }
 
@@ -420,10 +419,12 @@ fn main() -> Result<()> {
         )?;
 
         formula_pb.finish_and_clear();
+
+        println!("✅ Processing complete");
     } else {
         println!("📁 Processing {} files found by glob pattern...", paths.len());
         run_batch(&paths, output_dir, ppi_f32, format, &font_config, verbose)?;
-        println!("✅ Batch processing complete.");
+        println!("✅ Batch processing complete");
     }
 
     Ok(())
