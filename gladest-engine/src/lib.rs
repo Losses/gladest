@@ -260,7 +260,7 @@ impl RenderEngine {
             .engine
             .compile_with_input(content)
             .output
-            .with_context(|| format!("Failed to compile formula: {}", formula))?;
+            .with_context(|| "Failed to compile formula")?;
 
         let page = &doc.pages[0];
         let size = page.frame.size();
@@ -328,7 +328,7 @@ impl RenderEngine {
             .engine
             .compile_with_input(content)
             .output
-            .with_context(|| format!("Failed to compile formula: {}", formula))?;
+            .with_context(|| "Failed to compile formula")?;
 
         let page = &doc.pages[0];
         let size = page.frame.size();
