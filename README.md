@@ -1,4 +1,6 @@
-# Gladest
+![Gladest](/assets/banner.png)
+
+* * *
 
 **Gladest** is a Typst-based implementation inspired by GladTeX, designed to seamlessly convert LaTeX formulas embedded in HTML files into rasterized (PNG) or vector (SVG) images. These images are then embedded directly into the output HTML as Base64-encoded data, eliminating the need for external image files. Built to integrate with Pandoc's GladTeX workflow, Gladest distinguishes itself by being a self-contained tool that requires no external Typst or LaTeX installations. It also boasts enhanced rendering performance, parallel formula processing capabilities, and support for rendering CJK (Chinese, Japanese, Korean) characters within formulas—setting it apart from GladTeX.
 
