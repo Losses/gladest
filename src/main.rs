@@ -167,7 +167,9 @@ fn format_formula_error(formula_error: &FormulaError, verbose: bool) -> String {
         "❌ Formula #{} failed to render:\n",
         formula_error.formula_index + 1
     ));
-    output.push_str(&format!("   Formula: {}\n", formula_preview));
+    output.push_str("   ```\n");
+    output.push_str(&format!("   {}\n", formula_preview.replace("\n", "\n   ")));
+    output.push_str("   ```\n");
     
     if verbose {
         output.push_str("   Error details:\n");

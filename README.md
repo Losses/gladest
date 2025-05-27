@@ -126,13 +126,6 @@ Gladest supports three types of font sources:
 --body-font-name "Crimson Text" --math-font-name "TeX Gyre Termes Math"
 ```
 
-#### For CJK Documents
-
-```bash
---body-font-name "Noto Serif SC" --math-font-name "STIX Two Math"
---body-font-file fonts/SimSun.ttf --math-font-name "Cambria Math"
-```
-
 ## How It Works
 
 1. **Font Configuration**: Validates and loads specified fonts (system fonts or font files) for body text and mathematical expressions.

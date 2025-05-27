@@ -151,14 +151,11 @@ fn format_typst_error(error: &TypstAsLibError, formula: &str) -> String {
             }
 
             for (i, diagnostic) in diagnostics.iter().enumerate() {
-                error_msg.push_str(&format!("\nError #{}: ", i + 1));
+                error_msg.push_str(&format!("\n{:?} #{}: ", diagnostic.severity, i + 1));
 
                 // Add the main error message
                 error_msg.push_str(&diagnostic.message);
                 error_msg.push('\n');
-
-                // Add severity information
-                error_msg.push_str(&format!("  Severity: {:?}\n", diagnostic.severity));
 
                 // Add span information
                 let span = diagnostic.span;
