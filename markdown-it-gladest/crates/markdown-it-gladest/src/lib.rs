@@ -6,7 +6,12 @@ use once_cell::sync::Lazy;
 
 use neon::prelude::*;
 
-static RENDER_ENGINE: Lazy<Mutex<Option<RenderEngine>>> = Lazy::new(|| Mutex::new(None));
+struct EngineWithConfig {
+    engine: RenderEngine,
+    config: Option<FontConfig>,
+}
+
+static RENDER_ENGINE: Lazy<Mutex<Option<EngineWithConfig>>> = Lazy::new(|| Mutex::new(None));
 
 /// Expands tilde in file paths (similar to main.rs)
 fn expand_tilde(path: &str) -> String {
@@ -142,24 +147,34 @@ fn get_options(
 /// Get or create render engine with the appropriate font configuration
 fn get_or_create_engine(
     font_config: Option<FontConfig>,
-) -> anyhow::Result<&'static Mutex<Option<RenderEngine>>> {
+) -> anyhow::Result<&'static Mutex<Option<EngineWithConfig>>> {
     let mut engine_guard = RENDER_ENGINE.lock().unwrap();
 
-    // If we have a font config, always create a new engine with it
-    if let Some(config) = font_config {
-        let engine = RenderEngine::with_font_config(config);
-        *engine_guard = Some(engine);
-        drop(engine_guard); // Release the lock before returning
-        return Ok(&RENDER_ENGINE);
+    if let Some(current) = engine_guard.as_ref() {
+        let configs_match = match (&current.config, &font_config) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        };
+
+        if configs_match {
+            drop(engine_guard);
+            return Ok(&RENDER_ENGINE);
+        }
     }
 
-    // If no font config and no existing engine, create default
-    if engine_guard.is_none() {
-        let engine = RenderEngine::new();
-        *engine_guard = Some(engine);
-    }
+    let engine = if let Some(config) = font_config.clone() {
+        RenderEngine::with_font_config(config)
+    } else {
+        RenderEngine::new()
+    };
 
-    drop(engine_guard); // Release the lock before returning
+    *engine_guard = Some(EngineWithConfig {
+        engine,
+        config: font_config,
+    });
+
+    drop(engine_guard);
     Ok(&RENDER_ENGINE)
 }
 
@@ -184,8 +199,10 @@ fn render_latex(mut cx: FunctionContext) -> JsResult<JsString> {
     let result = match get_or_create_engine(font_config) {
         Ok(engine_ref) => {
             let engine_guard = engine_ref.lock().unwrap();
-            if let Some(ref engine) = *engine_guard {
-                engine.render_formula(&formula, is_inline, format, ppi)
+            if let Some(ref engine_with_config) = *engine_guard {
+                engine_with_config
+                    .engine
+                    .render_formula(&formula, is_inline, format, ppi)
             } else {
                 return Ok(cx.string(format!(
                     r#"<span class="gladst-error" title="Engine not initialized">Gladst Error: Engine not initialized. Formula: {}</span>"#,
@@ -239,9 +256,24 @@ fn set_font_config(mut cx: FunctionContext) -> JsResult<JsBoolean> {
     if let Ok(fonts_obj) = fonts_arg.downcast::<JsObject, _>(&mut cx) {
         match parse_font_config(&mut cx, fonts_obj) {
             Ok(font_config) => {
-                let engine = RenderEngine::with_font_config(font_config);
                 let mut engine_guard = RENDER_ENGINE.lock().unwrap();
-                *engine_guard = Some(engine);
+
+                let needs_update = match engine_guard.as_ref() {
+                    Some(current) => match &current.config {
+                        Some(current_config) => current_config != &font_config,
+                        None => true,
+                    },
+                    None => true,
+                };
+
+                if needs_update {
+                    let engine = RenderEngine::with_font_config(font_config.clone());
+                    *engine_guard = Some(EngineWithConfig {
+                        engine,
+                        config: Some(font_config),
+                    });
+                }
+
                 Ok(cx.boolean(true))
             }
             Err(e) => Err(e),

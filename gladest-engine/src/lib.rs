@@ -35,7 +35,7 @@ pub struct FontNames {
 }
 
 /// Font source configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum FontSource {
     /// Use a font file from the filesystem
     File(String),
@@ -54,6 +54,14 @@ pub struct FontConfig {
     pub math_font: FontSource,
     /// Whether to include system fonts in the search
     pub include_system_fonts: bool,
+}
+
+impl PartialEq for FontConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.body_font == other.body_font
+            && self.math_font == other.math_font
+            && self.include_system_fonts == other.include_system_fonts
+    }
 }
 
 impl Default for FontConfig {
