@@ -9,20 +9,18 @@ OPENSSL_DIR = "/usr"
 # Explicitly set PKG_CONFIG_PATH just in case it's needed
 PKG_CONFIG_PATH = "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"
 
-
 [target.aarch64-unknown-linux-gnu]
 # Commands to run inside the cross container before building
 pre-build = [
     "dpkg --add-architecture arm64",
     "apt-get update",
-    "apt-get install --assume-yes --no-install-recommends libssl-dev:arm64 zlib1g-dev:arm64 pkg-config",
+    "apt-get install --assume-yes --no-install-recommends libssl-dev:arm64 pkg-config zlib1g-dev:arm64",
 ]
 # Environment variables for the build process inside the container
 OPENSSL_DIR = "/usr"
 # Adjust PKG_CONFIG_PATH for the arm64 architecture
 PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig"
-
-# Add these lines to ensure native code is compiled with -fPIC
-# This is crucial when linking static libraries into a shared object.
+LIBZ_SYS_STATIC = "0"
+PKG_CONFIG_ALLOW_CROSS = "1"
 CFLAGS = "-fPIC"
-CXXFLAGS = "-fPIC" # Good practice, though zlib is C
+CXXFLAGS = "-fPIC"
