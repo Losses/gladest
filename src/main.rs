@@ -14,7 +14,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use scraper::{Html, Selector};
 
-use gladest_engine::{RenderEngine, RenderFormat};
+use gladest_engine::{FontConfig, FontSource, RenderEngine, RenderFormat};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -33,6 +33,22 @@ struct Args {
     /// Output format (png or svg)
     #[arg(short, long, default_value = "png", value_enum)]
     format: Format,
+
+    /// Body font file path
+    #[arg(long, help = "Path to body font file (e.g., serif.ttf)")]
+    body_font_file: Option<PathBuf>,
+
+    /// Body font name (system font)
+    #[arg(long, help = "System body font name (e.g., 'Times New Roman')")]
+    body_font_name: Option<String>,
+
+    /// Math font file path
+    #[arg(long, help = "Path to math font file (e.g., math.otf)")]
+    math_font_file: Option<PathBuf>,
+
+    /// Math font name (system font)
+    #[arg(long, help = "System math font name (e.g., 'STIX Two Math')")]
+    math_font_name: Option<String>,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,12 +57,53 @@ enum Format {
     Svg,
 }
 
+/// Create font configuration from command line arguments
+fn create_font_config(args: &Args) -> Result<FontConfig> {
+    let body_font = match (&args.body_font_file, &args.body_font_name) {
+        (Some(file), None) => {
+            if !file.exists() {
+                return Err(anyhow::anyhow!("Body font file does not exist: {:?}", file));
+            }
+            FontSource::File(file.to_string_lossy().to_string())
+        }
+        (None, Some(name)) => FontSource::System(name.clone()),
+        (Some(_), Some(_)) => {
+            return Err(anyhow::anyhow!(
+                "Cannot specify both body font file and body font name. Choose one."
+            ));
+        }
+        (None, None) => FontSource::System("serif".to_string()), // Default
+    };
+
+    let math_font = match (&args.math_font_file, &args.math_font_name) {
+        (Some(file), None) => {
+            if !file.exists() {
+                return Err(anyhow::anyhow!("Math font file does not exist: {:?}", file));
+            }
+            FontSource::File(file.to_string_lossy().to_string())
+        }
+        (None, Some(name)) => FontSource::System(name.clone()),
+        (Some(_), Some(_)) => {
+            return Err(anyhow::anyhow!(
+                "Cannot specify both math font file and math font name. Choose one."
+            ));
+        }
+        (None, None) => FontSource::System("Fira Math".to_string()), // Default
+    };
+
+    Ok(FontConfig {
+        body_font,
+        math_font,
+    })
+}
+
 /// Renders formulas within HTML content and returns the modified HTML.
 /// Takes an optional ProgressBar ONLY for the single-file case to update formula progress.
 fn render_formulas_in_html(
     html_content: &str,
     ppi: f32,
     format: Format,
+    font_config: &FontConfig,
     pb_formulas: Option<&ProgressBar>,
 ) -> Result<String> {
     let document = Html::parse_document(html_content);
@@ -84,6 +141,9 @@ fn render_formulas_in_html(
     let processed_html_string_mutex = Arc::new(Mutex::new(processed_html_string));
     let render_errors = Arc::new(Mutex::new(Vec::<String>::new()));
 
+    // Create render engine once with the configured fonts
+    let renderer = RenderEngine::with_font_config(font_config.clone());
+
     formula_tasks
         .into_par_iter()
         .for_each(|(formula_id, formula, env)| {
@@ -92,8 +152,6 @@ fn render_formulas_in_html(
                 "math" | "" => true,
                 _ => true,
             };
-
-            let renderer = RenderEngine::new(); // Create renderer per task
 
             match renderer.render_formula(
                 &formula,
@@ -158,12 +216,14 @@ fn process_single_file(
     output_dir_option: Option<&Path>,
     ppi: f32,
     format: Format,
+    font_config: &FontConfig,
     pb_formulas: Option<&ProgressBar>,
 ) -> Result<()> {
     let input_content = fs::read_to_string(input_path)
         .with_context(|| format!("Failed to read input file: {:?}", input_path))?;
 
-    let processed_html = render_formulas_in_html(&input_content, ppi, format, pb_formulas)?;
+    let processed_html =
+        render_formulas_in_html(&input_content, ppi, format, font_config, pb_formulas)?;
 
     let inplace = needs_inplace_modification(input_path);
     let output_path = if inplace {
@@ -186,8 +246,26 @@ fn process_single_file(
     Ok(())
 }
 
+fn print_font_config(font_config: &FontConfig) {
+    println!("Font Configuration:");
+    match &font_config.body_font {
+        FontSource::System(name) => println!("  Body Font: {} (system)", name),
+        FontSource::File(path) => println!("  Body Font: {} (file)", path),
+        FontSource::Data(_) => println!("  Body Font: embedded data"),
+    }
+    match &font_config.math_font {
+        FontSource::System(name) => println!("  Math Font: {} (system)", name),
+        FontSource::File(path) => println!("  Math Font: {} (file)", path),
+        FontSource::Data(_) => println!("  Math Font: embedded data"),
+    }
+    println!();
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Create font configuration
+    let font_config = create_font_config(&args).context("Failed to create font configuration")?;
 
     let paths: Vec<PathBuf> = glob(&args.input)
         .with_context(|| format!("Failed to read glob pattern: {}", args.input))?
@@ -203,6 +281,9 @@ fn main() -> Result<()> {
     let format = args.format;
     let output_dir = args.output.as_deref();
 
+    // Print font configuration
+    print_font_config(&font_config);
+
     if paths.len() == 1 {
         println!("Processing single file: {:?}", paths[0]);
         let formula_pb = ProgressBar::new(0);
@@ -216,12 +297,19 @@ fn main() -> Result<()> {
         );
         formula_pb.enable_steady_tick(Duration::from_millis(100));
 
-        process_single_file(&paths[0], output_dir, ppi_f32, format, Some(&formula_pb))?;
+        process_single_file(
+            &paths[0],
+            output_dir,
+            ppi_f32,
+            format,
+            &font_config,
+            Some(&formula_pb),
+        )?;
 
         formula_pb.finish_and_clear();
     } else {
         println!("Processing {} files found by glob pattern...", paths.len());
-        run_batch(&paths, output_dir, ppi_f32, format)?;
+        run_batch(&paths, output_dir, ppi_f32, format, &font_config)?;
         println!("Batch processing complete.");
     }
 
@@ -233,6 +321,7 @@ fn run_batch(
     output_dir_option: Option<&Path>,
     ppi: f32,
     format: Format,
+    font_config: &FontConfig,
 ) -> Result<()> {
     let multi_progress = MultiProgress::new();
     let files_pb = multi_progress.add(ProgressBar::new(paths.len() as u64));
@@ -250,7 +339,8 @@ fn run_batch(
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
         files_pb.set_message(format!("Processing: {}", file_name));
 
-        if let Err(e) = process_single_file(path, output_dir_option, ppi, format, Some(&files_pb)) {
+        if let Err(e) = process_single_file(path, output_dir_option, ppi, format, font_config, None)
+        {
             let error_record = (
                 path.clone(),
                 e.context(format!("Processing failed for file: {:?}", path)),
