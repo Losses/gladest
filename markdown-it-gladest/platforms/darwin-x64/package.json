@@ -1,7 +1,7 @@
 {
   "name": "@fuuck/markdown-it-gladest-darwin-x64",
   "description": "Prebuilt binary package for `markdown-it-gladest` on `darwin-x64`.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "os": [
     "darwin"
   ],
