@@ -14,7 +14,9 @@ use typst::{
     foundations::{Dict, IntoValue},
     layout::PagedDocument,
 };
-use typst_as_lib::{TypstAsLibError, TypstEngine, TypstTemplateMainFile};
+use typst_as_lib::{
+    TypstAsLibError, TypstEngine, TypstTemplateMainFile, typst_kit_options::TypstKitFontOptions,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RenderFormat {
@@ -50,6 +52,10 @@ pub struct FontConfig {
     pub body_font: FontSource,
     /// Font used for mathematical expressions
     pub math_font: FontSource,
+    /// Whether to include system fonts in the search
+    pub include_system_fonts: bool,
+    /// Whether to include embedded fonts
+    pub include_embedded_fonts: bool,
 }
 
 impl Default for FontConfig {
@@ -57,6 +63,8 @@ impl Default for FontConfig {
         Self {
             body_font: FontSource::System("serif".to_string()),
             math_font: FontSource::System("Fira Math".to_string()),
+            include_system_fonts: true,
+            include_embedded_fonts: true,
         }
     }
 }
@@ -234,16 +242,24 @@ impl RenderEngine {
     /// Create a new render engine with custom font configuration
     pub fn with_font_config(font_config: FontConfig) -> Self {
         let source = Self::generate_template(&font_config);
-        println!("AAAAAA");
-        println!("{}", source);
-        println!("VVVVVV");
+
         let mut engine_builder = TypstEngine::builder()
             .main_file(source)
             .with_package_file_resolver();
 
-        // Collect font data for the engine
+        // Configure font search options
+        let font_options = TypstKitFontOptions::default()
+            .include_system_fonts(font_config.include_system_fonts)
+            .include_embedded_fonts(font_config.include_embedded_fonts);
+
+        // Apply font search configuration
+        engine_builder = engine_builder.search_fonts_with(font_options);
+
+        // Collect additional font data for the engine
         let mut font_data = Vec::new();
 
+        // Only add Data fonts to the engine's font collection
+        // System and File fonts will be handled by the font search mechanism
         if let FontSource::Data(data) = &font_config.body_font {
             font_data.push(data.as_slice());
         }
@@ -251,7 +267,7 @@ impl RenderEngine {
             font_data.push(data.as_slice());
         }
 
-        // Load font files if specified
+        // Load font files if specified and add them to the font collection
         if let FontSource::File(path) = &font_config.body_font {
             if let Ok(data) = std::fs::read(path) {
                 font_data.push(Box::leak(data.into_boxed_slice()));
@@ -263,6 +279,7 @@ impl RenderEngine {
             }
         }
 
+        // Add collected font data to the engine if any
         if !font_data.is_empty() {
             engine_builder = engine_builder.fonts(font_data);
         }
@@ -314,14 +331,32 @@ impl RenderEngine {
         match font_source {
             FontSource::System(name) => name.clone(),
             FontSource::File(path) => {
-                // Extract font name from file if possible, otherwise use filename
+                // For file fonts, try to extract the actual font name from the file
+                // If that fails, fall back to using the filename
+                if let Ok(font_data) = std::fs::read(path) {
+                    if let Ok(font_names) = read_font_names(&font_data, 0) {
+                        if let Some(family_name) = font_names.family_name {
+                            return family_name;
+                        }
+                    }
+                }
+
+                // Fallback to filename if font name extraction fails
                 Path::new(path)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("serif")
                     .to_string()
             }
-            FontSource::Data(_) => "embedded".to_string(),
+            FontSource::Data(data) => {
+                // For data fonts, try to extract the actual font name
+                if let Ok(font_names) = read_font_names(data, 0) {
+                    if let Some(family_name) = font_names.family_name {
+                        return family_name;
+                    }
+                }
+                "embedded".to_string()
+            }
         }
     }
 

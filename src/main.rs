@@ -130,6 +130,8 @@ fn create_font_config(args: &Args) -> Result<FontConfig> {
     Ok(FontConfig {
         body_font,
         math_font,
+        include_system_fonts: args.body_font_name.is_some() || args.math_font_name.is_some(),
+        include_embedded_fonts: args.body_font_file.is_some() || args.math_font_file.is_some(),
     })
 }
 

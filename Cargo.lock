@@ -879,12 +879,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "fontconfig-parser"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1fcfcd44ca6e90c921fee9fa665d530b21ef1327a4c1a6c5250ea44b776ada7"
+dependencies = [
+ "roxmltree",
+]
+
+[[package]]
 name = "fontdb"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37be9fc20d966be438cd57a45767f73349477fb0f85ce86e000557f787298afb"
 dependencies = [
+ "fontconfig-parser",
  "log",
+ "memmap2",
  "slotmap",
  "tinyvec",
  "ttf-parser",
@@ -1785,6 +1796,15 @@ name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
+
+[[package]]
+name = "memmap2"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "mime"
@@ -3505,6 +3525,7 @@ dependencies = [
  "reqwest",
  "thiserror 2.0.12",
  "typst 0.13.1",
+ "typst-kit",
 ]
 
 [[package]]
@@ -3550,6 +3571,24 @@ dependencies = [
  "typst-library",
  "typst-macros 0.13.1",
  "typst-svg",
+ "typst-syntax 0.13.1",
+ "typst-timing 0.13.1",
+ "typst-utils 0.13.1",
+]
+
+[[package]]
+name = "typst-kit"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "818fa9d54e1663fe20d15f6359945616cc4026d68c4de6c4eb0add7556fe2a90"
+dependencies = [
+ "ecow",
+ "fontdb",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "typst-assets 0.13.1",
+ "typst-library",
  "typst-syntax 0.13.1",
  "typst-timing 0.13.1",
  "typst-utils 0.13.1",
