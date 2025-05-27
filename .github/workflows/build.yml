@@ -45,7 +45,6 @@ jobs:
           echo "$JSON_OUTPUT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-
       - name: Compute Matrix
         id: matrix
         uses: actions/github-script@v7
@@ -69,14 +68,36 @@ jobs:
             const matrix = [];
             // Add optional chaining for safety
             if (platforms?.macOS) {
-              matrix.push(...platforms.macOS.map(platform => ({ os: "macos-latest", platform, script: "build" })));
+              matrix.push(...platforms.macOS.map(platform => ({ 
+                os: "macos-latest", 
+                platform, 
+                script: "build" 
+              })));
             }
             if (platforms?.Windows) {
-              matrix.push(...platforms.Windows.map(platform => ({ os: "windows-latest", platform, script: "build" })));
+              matrix.push(...platforms.Windows.map(platform => ({ 
+                os: "windows-latest", 
+                platform, 
+                script: "build" 
+              })));
             }
             if (platforms?.Linux) {
-              // Ensure Linux platforms are correctly mapped if needed
-              matrix.push(...platforms.Linux.map(platform => ({ os: "ubuntu-latest", platform, script: "cross" })));
+              // Map Linux platforms to appropriate runners and native builds
+              matrix.push(...platforms.Linux.map(platform => {
+                // Determine runner based on architecture
+                let runner = "ubuntu-latest"; // Default for x64
+                if (platform.includes('arm64') || platform.includes('aarch64')) {
+                  runner = "ubuntu-24.04-arm";
+                } else if (platform.includes('x64') || platform.includes('x86_64')) {
+                  runner = "ubuntu-latest";
+                }
+                
+                return { 
+                  os: runner, 
+                  platform, 
+                  script: "build"
+                };
+              }));
             }
 
             console.log("Computed Matrix:", matrix);
@@ -114,28 +135,30 @@ jobs:
           echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libffi)/lib/pkgconfig" >> $GITHUB_ENV
+
       - name: Install OpenSSL (Windows)
         if: runner.os == 'Windows'
         run: |
           vcpkg install openssl:${{ matrix.cfg.platform == 'win32-x64-msvc' && 'x64' || 'x86' }}-windows-static-md
         shell: pwsh
 
-      - name: Setup Neon Environment (Rust/Cross)
-        id: neon
-        uses: ./.github/actions/setup # Assuming this action is in the root .github/actions
-        with:
-          use-cross: ${{ matrix.cfg.script == 'cross' }}
-          platform: ${{ matrix.cfg.platform }}
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Dependencies
         working-directory: ./markdown-it-gladest
         run: bun install --frozen-lockfile
 
-      - name: Build Binary
+      - name: Build Binary (Native)
         working-directory: ./markdown-it-gladest
         shell: bash
         env:
-          CARGO_BUILD_TARGET: ${{ steps.neon.outputs.target }}
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
         run: bun run ${{ matrix.cfg.script }}
 
@@ -146,7 +169,7 @@ jobs:
           CRATE_NAME="markdown-it-gladest"
           # Cargo usually replaces hyphens with underscores for the library filename
           CRATE_LIB_NAME=$(echo "$CRATE_NAME" | sed 's/-/_/g')
-          TARGET_DIR="../target/${{ steps.neon.outputs.target }}/release"
+          TARGET_DIR="../target/release" # Simplified path for native builds
           PLATFORM_DIR="./platforms/${{ matrix.cfg.platform }}"
           DEST_FILE="${PLATFORM_DIR}/index.node"
 
