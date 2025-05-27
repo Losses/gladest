@@ -9,7 +9,6 @@ use anyhow::{Context, Result};
 use clap::{Parser, arg, command};
 use clap_derive::{Parser, ValueEnum};
 use glob::glob;
-use html_escape::encode_text;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use scraper::{Html, Selector};
@@ -49,12 +48,23 @@ struct Args {
     /// Math font name (system font)
     #[arg(long, help = "System math font name (e.g., 'STIX Two Math')")]
     math_font_name: Option<String>,
+
+    /// Show verbose error output
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 enum Format {
     Png,
     Svg,
+}
+
+#[derive(Debug)]
+struct FormulaError {
+    formula: String,
+    error: anyhow::Error,
+    formula_index: usize,
 }
 
 fn expand_tilde(path: &str) -> String {
@@ -123,6 +133,52 @@ fn create_font_config(args: &Args) -> Result<FontConfig> {
     })
 }
 
+/// Extract detailed error information from anyhow::Error chain
+fn extract_detailed_error(error: &anyhow::Error) -> String {
+    let mut error_parts = Vec::new();
+    
+    // Get the main error message
+    error_parts.push(format!("Main error: {}", error));
+    
+    // Walk through the error chain
+    let mut current = error.source();
+    let mut depth = 1;
+    while let Some(err) = current {
+        error_parts.push(format!("  Cause {}: {}", depth, err));
+        current = err.source();
+        depth += 1;
+    }
+    
+    error_parts.join("\n")
+}
+
+/// Format formula error for display
+fn format_formula_error(formula_error: &FormulaError, verbose: bool) -> String {
+    let formula_preview = if formula_error.formula.len() > 100 {
+        format!("{}...", &formula_error.formula[..97])
+    } else {
+        formula_error.formula.clone()
+    };
+
+    let mut output = String::new();
+    output.push_str(&format!(
+        "❌ Formula #{} failed to render:\n",
+        formula_error.formula_index + 1
+    ));
+    output.push_str(&format!("   Formula: {}\n", formula_preview));
+    
+    if verbose {
+        output.push_str("   Error details:\n");
+        for line in extract_detailed_error(&formula_error.error).lines() {
+            output.push_str(&format!("     {}\n", line));
+        }
+    } else {
+        output.push_str(&format!("   Error: {}\n", formula_error.error));
+    }
+    
+    output
+}
+
 /// Renders formulas within HTML content and returns the modified HTML.
 /// Takes an optional ProgressBar ONLY for the single-file case to update formula progress.
 fn render_formulas_in_html(
@@ -131,7 +187,7 @@ fn render_formulas_in_html(
     format: Format,
     font_config: &FontConfig,
     pb_formulas: Option<&ProgressBar>,
-) -> Result<String> {
+) -> Result<(String, Vec<FormulaError>)> {
     let document = Html::parse_document(html_content);
     let selector = Selector::parse("eq").expect("Invalid selector 'eq'");
 
@@ -152,11 +208,11 @@ fn render_formulas_in_html(
             processed_html_string.replace_range(pos..pos + original_eq_html.len(), &formula_id);
         }
 
-        formula_tasks.push((formula_id, formula, env));
+        formula_tasks.push((formula_id, formula, env, formula_id_counter));
     }
 
     if formula_tasks.is_empty() {
-        return Ok(processed_html_string);
+        return Ok((processed_html_string, Vec::new()));
     }
 
     if let Some(pb) = pb_formulas {
@@ -165,14 +221,14 @@ fn render_formulas_in_html(
     }
 
     let processed_html_string_mutex = Arc::new(Mutex::new(processed_html_string));
-    let render_errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let formula_errors = Arc::new(Mutex::new(Vec::<FormulaError>::new()));
 
     // Create render engine once with the configured fonts
     let renderer = RenderEngine::with_font_config(font_config.clone());
 
     formula_tasks
         .into_par_iter()
-        .for_each(|(formula_id, formula, env)| {
+        .for_each(|(formula_id, formula, env, formula_index)| {
             let is_inline = match env.as_str() {
                 "displaymath" => false,
                 "math" | "" => true,
@@ -197,13 +253,18 @@ fn render_formulas_in_html(
                     }
                 }
                 Err(e) => {
-                    let error_msg = format!("Error rendering formula '{}': {:?}", formula, e);
-                    eprintln!("{}", error_msg); // Keep error reporting
-                    render_errors.lock().unwrap().push(error_msg);
+                    // Store the error for later reporting
+                    formula_errors.lock().unwrap().push(FormulaError {
+                        formula: formula.clone(),
+                        error: e,
+                        formula_index,
+                    });
+                    
+                    // Create error replacement in HTML
                     let error_replacement = format!(
-                        r#"<span style="color: red;" title="Render Error: {}">[{}]</span>"#,
-                        encode_text(&e.to_string()),
-                        formula
+                        r#"<span style="color: red; background-color: #ffe6e6; padding: 2px 4px; border-radius: 3px;" title="Formula render error - see logs for details">[Formula Error #{}: {}]</span>"#,
+                        formula_index + 1,
+                        if formula.len() > 20 { format!("{}...", &formula[..17]) } else { formula }
                     );
                     let mut locked_string = processed_html_string_mutex.lock().unwrap();
                     *locked_string = locked_string.replacen(&formula_id, &error_replacement, 1);
@@ -215,18 +276,20 @@ fn render_formulas_in_html(
             }
         });
 
-    let errors = render_errors.lock().unwrap();
-    if !errors.is_empty() {
-        eprintln!(
-            "\nEncountered {} formula rendering errors in this file.",
-            errors.len()
-        );
-    }
-
-    Arc::try_unwrap(processed_html_string_mutex)
+    let final_html = Arc::try_unwrap(processed_html_string_mutex)
         .map_err(|_| anyhow::anyhow!("Failed to unwrap Mutex for processed HTML string"))?
         .into_inner()
-        .map_err(|_| anyhow::anyhow!("Mutex for processed HTML string was poisoned"))
+        .map_err(|_| anyhow::anyhow!("Mutex for processed HTML string was poisoned"))?;
+
+    let mut errors = Arc::try_unwrap(formula_errors)
+        .map_err(|_| anyhow::anyhow!("Failed to unwrap Mutex for formula errors"))?
+        .into_inner()
+        .map_err(|_| anyhow::anyhow!("Mutex for formula errors was poisoned"))?;
+
+    // Sort errors by formula index for consistent output
+    errors.sort_by_key(|e| e.formula_index);
+
+    Ok((final_html, errors))
 }
 
 fn needs_inplace_modification(path: &Path) -> bool {
@@ -244,12 +307,30 @@ fn process_single_file(
     format: Format,
     font_config: &FontConfig,
     pb_formulas: Option<&ProgressBar>,
+    verbose: bool,
 ) -> Result<()> {
     let input_content = fs::read_to_string(input_path)
         .with_context(|| format!("Failed to read input file: {:?}", input_path))?;
 
-    let processed_html =
+    let (processed_html, formula_errors) =
         render_formulas_in_html(&input_content, ppi, format, font_config, pb_formulas)?;
+
+    // Report formula errors if any
+    if !formula_errors.is_empty() {
+        println!("\n⚠️  Formula Rendering Errors in {:?}:", input_path);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        for formula_error in &formula_errors {
+            print!("{}", format_formula_error(formula_error, verbose));
+        }
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("📊 Summary: {} out of {} formulas failed to render", 
+                formula_errors.len(), 
+                processed_html.matches("__GLADST_FORMULA_PLACEHOLDER_").count() + formula_errors.len());
+        if !verbose {
+            println!("💡 Use --verbose flag to see detailed error information");
+        }
+        println!();
+    }
 
     let inplace = needs_inplace_modification(input_path);
     let output_path = if inplace {
@@ -273,16 +354,16 @@ fn process_single_file(
 }
 
 fn print_font_config(font_config: &FontConfig) {
-    println!("Font Configuration:");
+    println!("🔤 Font Configuration:");
     match &font_config.body_font {
-        FontSource::System(name) => println!("  Body Font: {} (system)", name),
-        FontSource::File(path) => println!("  Body Font: {} (file)", path),
-        FontSource::Data(_) => println!("  Body Font: embedded data"),
+        FontSource::System(name) => println!("  📝 Body Font: {} (system)", name),
+        FontSource::File(path) => println!("  📝 Body Font: {} (file)", path),
+        FontSource::Data(_) => println!("  📝 Body Font: embedded data"),
     }
     match &font_config.math_font {
-        FontSource::System(name) => println!("  Math Font: {} (system)", name),
-        FontSource::File(path) => println!("  Math Font: {} (file)", path),
-        FontSource::Data(_) => println!("  Math Font: embedded data"),
+        FontSource::System(name) => println!("  🔢 Math Font: {} (system)", name),
+        FontSource::File(path) => println!("  🔢 Math Font: {} (file)", path),
+        FontSource::Data(_) => println!("  🔢 Math Font: embedded data"),
     }
     println!();
 }
@@ -299,19 +380,20 @@ fn main() -> Result<()> {
         .collect();
 
     if paths.is_empty() {
-        println!("No files found matching pattern: {}", args.input);
+        println!("❌ No files found matching pattern: {}", args.input);
         return Ok(());
     }
 
     let ppi_f32 = args.ppi as f32;
     let format = args.format;
     let output_dir = args.output.as_deref();
+    let verbose = args.verbose;
 
     // Print font configuration
     print_font_config(&font_config);
 
     if paths.len() == 1 {
-        println!("Processing single file: {:?}", paths[0]);
+        println!("📄 Processing single file: {:?}", paths[0]);
         let formula_pb = ProgressBar::new(0);
         formula_pb.set_style(
             ProgressStyle::default_bar()
@@ -330,13 +412,14 @@ fn main() -> Result<()> {
             format,
             &font_config,
             Some(&formula_pb),
+            verbose,
         )?;
 
         formula_pb.finish_and_clear();
     } else {
-        println!("Processing {} files found by glob pattern...", paths.len());
-        run_batch(&paths, output_dir, ppi_f32, format, &font_config)?;
-        println!("Batch processing complete.");
+        println!("📁 Processing {} files found by glob pattern...", paths.len());
+        run_batch(&paths, output_dir, ppi_f32, format, &font_config, verbose)?;
+        println!("✅ Batch processing complete.");
     }
 
     Ok(())
@@ -348,6 +431,7 @@ fn run_batch(
     ppi: f32,
     format: Format,
     font_config: &FontConfig,
+    verbose: bool,
 ) -> Result<()> {
     let multi_progress = MultiProgress::new();
     let files_pb = multi_progress.add(ProgressBar::new(paths.len() as u64));
@@ -365,7 +449,7 @@ fn run_batch(
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
         files_pb.set_message(format!("Processing: {}", file_name));
 
-        if let Err(e) = process_single_file(path, output_dir_option, ppi, format, font_config, None)
+        if let Err(e) = process_single_file(path, output_dir_option, ppi, format, font_config, None, verbose)
         {
             let error_record = (
                 path.clone(),
@@ -384,12 +468,24 @@ fn run_batch(
         .expect("Mutex should not be poisoned");
 
     if !collected_errors.is_empty() {
-        eprintln!("\n* Batch Processing Errors ({})", collected_errors.len());
-        for (path, error) in collected_errors.iter() {
-            eprintln!("**File: {:?}", path);
-            eprintln!("***Error: {:?}", error);
+        println!("\n❌ Batch Processing Errors ({}):", collected_errors.len());
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        for (i, (path, error)) in collected_errors.iter().enumerate() {
+            println!("🗂️  File #{}: {:?}", i + 1, path);
+            if verbose {
+                for line in extract_detailed_error(error).lines() {
+                    println!("   {}", line);
+                }
+            } else {
+                println!("   Error: {}", error);
+            }
+            println!();
         }
-        eprintln!("Finished with {} errors.", collected_errors.len());
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("📊 Finished with {} file processing errors.", collected_errors.len());
+        if !verbose {
+            println!("💡 Use --verbose flag to see detailed error information");
+        }
     }
 
     Ok(())
